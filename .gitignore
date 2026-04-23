@@ -1,0 +1,12 @@
+# Build outputs
+ClaudeCode/bin/
+ClaudeCode/obj/
+*.user
+*.suo
+.vs/
+
+# Deployed copies
+*.log
+
+# Installers build scratch
+/tmp/

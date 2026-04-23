@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>ClaudeCode</RootNamespace>
+    <AssemblyName>ClaudeCode</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+
+    <!-- VSIX packaging properties -->
+    <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <UseCodebase>true</UseCodebase>
+    <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
+    <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
+    <IncludeDebugSymbolsInLocalVSIXDeployment>false</IncludeDebugSymbolsInLocalVSIXDeployment>
+    <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
+    <CopyOutputSymbolsToOutputDirectory>false</CopyOutputSymbolsToOutputDirectory>
+
+    <!-- Suppress VS threading warnings -->
+    <NoWarn>$(NoWarn);VSTHRD100;VSTHRD101;VSTHRD110;VSTHRD010;VSTHRD001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.0.32112.339" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="17.0.5232">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2088.41" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- WPF and System references for .NET Framework 4.7.2 -->
+  <ItemGroup>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+    <Reference Include="System.Design" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Resources\webview\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="source.extension.vsixmanifest" />
+    <!-- DO NOT include ClaudeCode.pkgdef as content - let GeneratePkgDefFile create it -->
+  </ItemGroup>
+
+  <!--
+    Compile VSCT to binary ctmenu. First build creates the file,
+    second build embeds it as a managed resource.
+    With UseManagedResourcesOnly=true, VS loads ctmenu via Assembly.GetManifestResourceStream.
+  -->
+  <Target Name="CompileVSCT" BeforeTargets="BeforeBuild"
+          Inputs="ClaudeCodePackage.vsct"
+          Outputs="$(IntermediateOutputPath)Menus.ctmenu">
+    <PropertyGroup>
+      <VsctExe>$(NuGetPackageRoot)microsoft.vssdk.buildtools\17.0.5232\tools\vssdk\bin\VSCT.exe</VsctExe>
+      <VsctInc>$(NuGetPackageRoot)microsoft.vssdk.buildtools\17.0.5232\tools\vssdk\inc</VsctInc>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="&quot;$(VsctExe)&quot; &quot;$(MSBuildProjectDirectory)\ClaudeCodePackage.vsct&quot; &quot;$(IntermediateOutputPath)Menus.ctmenu&quot; &quot;-I$(VsctInc)&quot; -nologo" />
+  </Target>
+
+  <!-- Embed ctmenu as managed resource (requires double-build: first creates file, second embeds it) -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(IntermediateOutputPath)Menus.ctmenu" Condition="Exists('$(IntermediateOutputPath)Menus.ctmenu')">
+      <LogicalName>Menus.ctmenu</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

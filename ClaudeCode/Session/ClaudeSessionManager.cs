@@ -1,0 +1,142 @@
+using System;
+using System.Collections.Generic;
+using ClaudeCode.Model;
+
+namespace ClaudeCode.Session
+{
+    /// <summary>
+    /// Manages conversation session lifecycle - creating, resuming, persisting.
+    /// Port of com.anthropic.claude.intellij.session.ClaudeSessionManager.
+    /// </summary>
+    public class ClaudeSessionManager
+    {
+        private readonly SessionStore _store = new SessionStore();
+        private SessionInfo? _currentSession;
+
+        public SessionInfo? CurrentSession => _currentSession;
+
+        public SessionInfo StartNewSession(string? workingDirectory)
+        {
+            _currentSession = new SessionInfo(Guid.NewGuid().ToString())
+            {
+                WorkingDirectory = workingDirectory
+            };
+            return _currentSession;
+        }
+
+        public SessionInfo? ResumeSession(string sessionId)
+        {
+            var info = _store.LoadSession(sessionId);
+            if (info != null)
+                _currentSession = info;
+            return info;
+        }
+
+        /// <summary>
+        /// Adopt whatever sessionId the CLI emitted in SystemInit as the current session,
+        /// loading existing metadata from disk if any. Guarantees <see cref="CurrentSession"/>
+        /// is non-null so later calls to <see cref="SaveCurrentSession"/> and
+        /// <see cref="RenameSession"/> actually persist.
+        /// </summary>
+        public SessionInfo TrackSession(string sessionId, string? workingDirectory)
+        {
+            var existed = _store.LoadSession(sessionId);
+            var info = existed ?? new SessionInfo(sessionId)
+            {
+                WorkingDirectory = workingDirectory
+            };
+            if (string.IsNullOrEmpty(info.WorkingDirectory) && !string.IsNullOrEmpty(workingDirectory))
+                info.WorkingDirectory = workingDirectory;
+            info.Touch();
+            _currentSession = info;
+            // Persist immediately so the session shows in Session History even before
+            // the first turn completes and SaveCurrentSession runs.
+            _store.SaveSession(info);
+            return info;
+        }
+
+        public void SaveCurrentSession(ConversationModel model)
+        {
+            if (_currentSession == null) return;
+
+            // Update session from model state
+            var modelSession = model.SessionInfo;
+            if (modelSession != null)
+            {
+                _currentSession.SessionId = modelSession.SessionId ?? _currentSession.SessionId;
+                _currentSession.Model = modelSession.Model;
+                _currentSession.WorkingDirectory = modelSession.WorkingDirectory ?? _currentSession.WorkingDirectory;
+                _currentSession.PermissionMode = modelSession.PermissionMode;
+            }
+
+            _currentSession.MessageCount = model.MessageCount;
+            _currentSession.Touch();
+
+            // Auto-generate summary from first user message
+            if (string.IsNullOrEmpty(_currentSession.Summary))
+            {
+                var messages = model.GetMessages();
+                foreach (var msg in messages)
+                {
+                    if (msg.MessageRole == MessageBlock.Role.User)
+                    {
+                        var text = msg.GetFullText().Trim();
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            _currentSession.Summary = text.Length > 60
+                                ? text.Substring(0, 57) + "..."
+                                : text;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            _store.SaveSession(_currentSession);
+        }
+
+        public List<SessionInfo> ListSessions() => _store.ListSessions();
+
+        public void DeleteSession(string sessionId) => _store.DeleteSession(sessionId);
+
+        public void Cleanup() => _store.Cleanup(Settings.ClaudeSettings.Instance.SessionHistoryLimit);
+
+        /// <summary>
+        /// Resume the most recent session (sorted by lastActiveTime). Returns null if none.
+        /// </summary>
+        public SessionInfo? ContinueLastSession()
+        {
+            var sessions = ListSessions();
+            if (sessions.Count == 0) return null;
+            var first = sessions[0];
+            return first.SessionId != null ? ResumeSession(first.SessionId) : null;
+        }
+
+        /// <summary>
+        /// Update the user-friendly name (Summary) of a session and persist it.
+        /// Returns true on success.
+        /// </summary>
+        public bool RenameSession(string sessionId, string newName)
+        {
+            if (string.IsNullOrEmpty(sessionId)) return false;
+            var info = _store.LoadSession(sessionId);
+            if (info == null)
+            {
+                // Fix #4: sessions that were resumed via --resume may not be in our store yet.
+                // Create a minimal record so the rename persists instead of silently failing.
+                info = new SessionInfo(sessionId)
+                {
+                    Summary = newName,
+                    MessageCount = _currentSession?.MessageCount ?? 0,
+                    Model = _currentSession?.Model
+                };
+            }
+            info.Summary = newName;
+            _store.SaveSession(info);
+            // If renaming the active session, update in-memory copy too
+            if (_currentSession != null && _currentSession.SessionId == sessionId)
+                _currentSession.Summary = newName;
+            return true;
+        }
+    }
+}
