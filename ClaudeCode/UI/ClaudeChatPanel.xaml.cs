@@ -299,8 +299,9 @@ namespace ClaudeCode.UI
             // Round 3: send initial effort level
             var initialEffort = string.IsNullOrEmpty(settings.EffortLevel) ? "auto" : settings.EffortLevel;
             _bridge?.SendToWebview("effort_changed", JsonConvert.SerializeObject(new { effort = initialEffort }));
-            // Only start CLI if not already running
-            if (_cliManager == null || !_cliManager.IsRunning)
+            // Only start CLI if not already running OR starting (Eclipse fix #10: avoid races
+            // where webview_ready fires twice during slow startup → duplicate CLI processes).
+            if (_cliManager == null || !_cliManager.IsRunningOrStarting)
                 StartCli();
         }
 
@@ -1553,6 +1554,21 @@ namespace ClaudeCode.UI
         {
             Dispatch(() => _bridge?.SendToWebview("rate_limit",
                 JsonConvert.SerializeObject(new { message = message ?? "Rate limit hit", resetAt = resetAtEpochSec })));
+        }
+
+        void IConversationListener.OnSilentEmptyShouldRetry(string lastUserPrompt)
+        {
+            // Eclipse fix #6: silently re-send the last prompt once. Done on UI thread so we
+            // can also flip the Send/Stop button back to Stop visually.
+            Dispatch(() =>
+            {
+                if (_cliManager != null && _cliManager.IsRunning && !string.IsNullOrEmpty(lastUserPrompt))
+                {
+                    try { _cliManager.SendMessage(lastUserPrompt); } catch { }
+                    _bridge?.SendToWebview("system_message",
+                        JsonConvert.SerializeObject(new { text = "↻ auto-retry (hook returned empty)" }));
+                }
+            });
         }
 
         #endregion

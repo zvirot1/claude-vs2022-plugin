@@ -24,7 +24,7 @@ namespace ClaudeCode.Cli
 
                 return type switch
                 {
-                    "system" => ParseSystemInit(json),
+                    "system" => ParseSystemAny(json, line),
                     "assistant" => ParseAssistantMessage(json),
                     "user" => ParseUserMessage(json),
                     "result" => ParseResultMessage(json),
@@ -45,6 +45,30 @@ namespace ClaudeCode.Cli
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Eclipse fix #3: dispatch by subtype — only "init" (or missing subtype) is a SystemInit.
+        /// hook_started / hook_progress / hook_response / compact_boundary become SystemNotification
+        /// so the panel can surface their error markers.
+        /// </summary>
+        private CliMessage ParseSystemAny(JObject json, string rawLine)
+        {
+            var subtype = json.Value<string>("subtype");
+            if (string.IsNullOrEmpty(subtype) || subtype == "init") return ParseSystemInit(json);
+            return new CliMessage.SystemNotification
+            {
+                Subtype = subtype,
+                HookName = json.Value<string>("hook_name") ?? json["data"]?.Value<string>("hook_name"),
+                HookEvent = json.Value<string>("hook_event") ?? json["data"]?.Value<string>("hook_event"),
+                HookId = json.Value<string>("hook_id") ?? json["data"]?.Value<string>("hook_id"),
+                Stdout = json.Value<string>("stdout") ?? json["data"]?.Value<string>("stdout"),
+                Stderr = json.Value<string>("stderr") ?? json["data"]?.Value<string>("stderr"),
+                ExitCode = json.Value<int?>("exit_code") ?? json["data"]?.Value<int?>("exit_code"),
+                Outcome = json.Value<string>("outcome") ?? json["data"]?.Value<string>("outcome"),
+                SessionId = json.Value<string>("session_id"),
+                RawJson = json
+            };
         }
 
         private CliMessage.SystemInit ParseSystemInit(JObject json)

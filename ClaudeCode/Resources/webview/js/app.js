@@ -922,6 +922,10 @@
 
     function handleStreamingTextAppended(data) {
         if (!state.currentContentEl) return;
+        // Eclipse fix #2: race guard — if assistant_message_completed already cleared the
+        // streaming refs (currentAssistantEl == null), this delta arrived AFTER the message
+        // was finalized (slow UI thread vs fast deltas). Drop it so we don't double-render.
+        if (!state.currentAssistantEl) return;
 
         state.streamingTextBuffer += data.delta;
         renderMarkdown(state.currentContentEl, state.streamingTextBuffer);
@@ -1042,9 +1046,12 @@
         // Create a new content element for text after tool calls, if needed
         state.currentAssistantEl = null;
         state.currentContentEl = null;
-        // Keep streaming true until the final 'result' event — tools (Agent, etc.) may still be running.
-        // This fixes the disabled-Stop-button bug during long-running Agent tool calls.
-        // setStreamingState(false) intentionally removed; handleResultReceived will clear it.
+        // Eclipse fix #1: switch button back to Send IMMEDIATELY when assistant message
+        // completes and no tool is still running. The 'result' event arrives 12-15s later
+        // on slow networks/proxies — waiting for it leaves the red Stop button stale.
+        // For tool-heavy turns (Agent etc.), the 'running' tool element keeps streaming=true.
+        var runningTool = document.querySelector('.tool-call.running, .tool-call[data-status="running"]');
+        if (!runningTool) setStreamingState(false);
         scrollToBottom();
     }
 

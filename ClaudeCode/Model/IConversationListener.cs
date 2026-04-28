@@ -23,6 +23,8 @@ namespace ClaudeCode.Model
         void OnError(string error);
         void OnConversationCleared();
         void OnRateLimit(string? message, long? resetAtEpochSec);
+        /// <summary>Eclipse fix #6: model asks the panel to silently re-send the last user prompt.</summary>
+        void OnSilentEmptyShouldRetry(string lastUserPrompt);
     }
 
     /// <summary>
@@ -46,5 +48,6 @@ namespace ClaudeCode.Model
         public virtual void OnError(string error) { }
         public virtual void OnConversationCleared() { }
         public virtual void OnRateLimit(string? message, long? resetAtEpochSec) { }
+        public virtual void OnSilentEmptyShouldRetry(string lastUserPrompt) { }
     }
 }

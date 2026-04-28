@@ -104,6 +104,7 @@ namespace ClaudeCode.UI
         }
 
         void IConversationListener.OnRateLimit(string? message, long? resetAtEpochSec) { }
+        void IConversationListener.OnSilentEmptyShouldRetry(string lastUserPrompt) { }
 
         private static string? ShortenModelName(string? model)
         {

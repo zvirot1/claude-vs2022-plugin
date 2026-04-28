@@ -90,6 +90,40 @@ namespace ClaudeCode.Cli
             public RateLimitEvent() : base("rate_limit") { }
         }
 
+        /// <summary>
+        /// Eclipse fix #3: system messages with non-init subtypes (hook_started / hook_progress /
+        /// hook_response / compact_boundary). Carries hook stdout/stderr so the panel can surface
+        /// AWS SSO / token / proxy errors that the CLI itself swallows.
+        /// </summary>
+        public class SystemNotification : CliMessage
+        {
+            public string? Subtype { get; set; }
+            public string? HookName { get; set; }
+            public string? HookEvent { get; set; }
+            public string? HookId { get; set; }
+            public string? Stdout { get; set; }
+            public string? Stderr { get; set; }
+            public int? ExitCode { get; set; }
+            public string? Outcome { get; set; }
+            public string? SessionId { get; set; }
+            public JObject? RawJson { get; set; }
+            public SystemNotification() : base("system_notification") { }
+
+            /// <summary>Heuristic: treat the notification as a real error if exitCode != 0
+            /// or stdout/stderr contain typical auth/permission failure markers.</summary>
+            public bool HasErrorIndicator()
+            {
+                if (ExitCode.HasValue && ExitCode.Value != 0) return true;
+                var combined = ((Stderr ?? "") + " " + (Stdout ?? "")).ToLowerInvariant();
+                if (combined.Length == 0) return false;
+                string[] markers = { "[error]", "token has expired", "token is expired",
+                    "unauthorized", "permission denied", "access denied", "forbidden",
+                    "invalid credentials", "expiredtoken", "ssotokenloaderror" };
+                foreach (var m in markers) if (combined.Contains(m)) return true;
+                return false;
+            }
+        }
+
         public class ToolUseSummary : CliMessage
         {
             public string? Summary { get; set; }

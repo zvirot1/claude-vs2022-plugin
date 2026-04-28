@@ -102,7 +102,39 @@ namespace ClaudeCode.Model
                     foreach (var l in GetListeners())
                         try { l.OnRateLimit(rl.Message, rl.ResetAtEpochSec); } catch { }
                     break;
+                case CliMessage.SystemNotification note:
+                    HandleSystemNotification(note);
+                    break;
             }
+        }
+
+        // Eclipse fix #4 + #5 + #6: Track per-turn state so we can detect a "silent empty result"
+        // (CLI returns result with 0 tokens and no AssistantMessage — typical signature of a
+        // UserPromptSubmit hook block) and auto-retry once.
+        private volatile bool _hadTextInCurrentTurn = false;
+        private volatile CliMessage.SystemNotification? _lastErrorNotification = null;
+        private volatile string? _lastUserPrompt = null;
+        private volatile bool _retriedSilentEmpty = false;
+
+        private void HandleSystemNotification(CliMessage.SystemNotification n)
+        {
+            // Save for diagnostic purposes (used when classifying silent-empty results)
+            if (n.HasErrorIndicator()) _lastErrorNotification = n;
+
+            if (!"hook_response".Equals(n.Subtype, StringComparison.OrdinalIgnoreCase)) return;
+            if (!n.HasErrorIndicator()) return;
+
+            var detail = !string.IsNullOrEmpty(n.Stderr) ? n.Stderr : n.Stdout;
+            var lower = (detail ?? "").ToLowerInvariant();
+            string hint = "";
+            if (lower.Contains("token has expired") || lower.Contains("sso"))
+                hint = "\nFix: refresh your AWS SSO token (run `aws sso login`) and reopen this Claude tab.";
+            else if (lower.Contains("unauthorized") || lower.Contains("invalid credentials"))
+                hint = "\nFix: re-authenticate (check API key / SSO session).";
+            else if (lower.Contains("permission denied") || lower.Contains("access denied"))
+                hint = "\nFix: ensure your account/role has access to the configured model.";
+
+            FireError($"⚠ Hook '{n.HookName ?? "(unknown)"}' reported an error:\n{detail}{hint}");
         }
 
         public override void OnParseError(string rawLine, Exception error) { }
@@ -125,6 +157,14 @@ namespace ClaudeCode.Model
             textSeg.AppendText(content);
             block.AddSegment(textSeg);
             lock (_lock) { _messages.Add(block); }
+            // Eclipse fix #5/#6: reset per-turn flags + remember prompt for possible auto-retry
+            _hadTextInCurrentTurn = false;
+            _lastErrorNotification = null;
+            _lastUserPrompt = content;
+            // _retriedSilentEmpty stays as-is for the lifetime of this prompt — only reset
+            // when a successful turn completes (HandleResult with text) or new user message
+            // explicitly resets it below to allow next-turn retries.
+            _retriedSilentEmpty = false;
             FireUserMessageAdded(block);
         }
 
@@ -221,6 +261,7 @@ namespace ClaudeCode.Model
                         var seg = new MessageBlock.TextSegment();
                         seg.AppendText(cb.Text ?? "");
                         block.AddSegment(seg);
+                        if (!string.IsNullOrEmpty(cb.Text)) _hadTextInCurrentTurn = true;
                     }
                     else if (cb.Type == "tool_use")
                     {
@@ -331,6 +372,7 @@ namespace ClaudeCode.Model
             {
                 var textSeg = CurrentStreamingBlock.GetOrCreateLastTextSegment();
                 textSeg.AppendText(evt.Delta.Text);
+                _hadTextInCurrentTurn = true; // Eclipse fix #5: mark turn as productive
                 FireStreamingTextAppended(CurrentStreamingBlock, evt.Delta.Text);
             }
             else if (evt.Delta.Type == "input_json_delta")
@@ -387,6 +429,47 @@ namespace ClaudeCode.Model
 
             if (result.IsError && result.Result != null)
                 FireError(result.Result);
+
+            // Eclipse fix #5/#6/#7: detect "silent empty result" — no streamed text, no result text,
+            // 0 output tokens. This is the typical signature of a UserPromptSubmit hook block
+            // ("obfuscation attack detected" etc.) which the CLI swallows. Auto-retry once;
+            // if still empty, surface a friendly diagnostic.
+            bool resultEmpty = string.IsNullOrEmpty(result.Result);
+            bool silentEmpty = !_hadTextInCurrentTurn
+                               && resultEmpty
+                               && result.OutputTokens == 0
+                               && !result.IsError;
+            if (silentEmpty)
+            {
+                if (!_retriedSilentEmpty
+                    && !string.IsNullOrEmpty(_lastUserPrompt)
+                    && _lastErrorNotification == null)
+                {
+                    _retriedSilentEmpty = true;
+                    _hadTextInCurrentTurn = false;
+                    var prompt = _lastUserPrompt!;
+                    foreach (var l in GetListeners())
+                        try { l.OnSilentEmptyShouldRetry(prompt); } catch { }
+                    // Don't fire result-received yet; retry will produce its own result.
+                    SweepAllRunningToolCalls();
+                    _activeToolCalls.Clear();
+                    return;
+                }
+
+                // Final blocked state — friendly error
+                var retried = _retriedSilentEmpty
+                    ? "we already retried automatically and it was blocked again, so this prompt is consistently rejected."
+                    : "this attempt was rejected.";
+                FireError(
+                    "⚠ Your prompt was blocked"
+                    + (_retriedSilentEmpty ? " (after one auto-retry)" : "")
+                    + " by a hook.\n\n"
+                    + $"The CLI returned an empty response with 0 tokens (duration={result.DurationMs}ms, turns={result.NumTurns}). "
+                    + "This is the typical signature of a UserPromptSubmit hook (e.g. corporate \"obfuscation attack\" detector "
+                    + "flagging Hebrew/RTL text). The hook can be non-deterministic — " + retried + "\n\n"
+                    + "To see the exact reason, run in cmd:\n   claude --debug\n   <your prompt>\n\n"
+                    + "Workarounds: rephrase in English, try again later, or ask your IT/AWS admin to relax the hook rule.");
+            }
 
             if (CurrentStreamingBlock != null)
             {

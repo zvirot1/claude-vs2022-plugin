@@ -49,6 +49,10 @@ namespace ClaudeCode.Settings
         /// <summary>C1: User-added custom model names (shown in addition to presets).</summary>
         public List<string> CustomModels { get; set; } = new List<string>();
 
+        /// <summary>Eclipse fix #8: enable verbose diagnostic logging (off by default to avoid noise).
+        /// Can also be toggled via env var CLAUDE_DIAG=1 without changing this setting.</summary>
+        public bool DiagEnabled { get; set; } = false;
+
         public static ClaudeSettings Instance
         {
             get

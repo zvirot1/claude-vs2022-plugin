@@ -42,6 +42,8 @@ namespace ClaudeCode.Cli
         public string? WorkingDirectory { get; private set; }
         public ProcessState State => _state;
         public bool IsRunning => _state == ProcessState.Running;
+        /// <summary>Eclipse fix #10: includes Starting so callers don't try to spawn duplicate CLIs.</summary>
+        public bool IsRunningOrStarting => _state == ProcessState.Running || _state == ProcessState.Starting;
         public bool IsBusy => _busy;
         public int LastExitCode => _lastExitCode;
 
@@ -607,6 +609,7 @@ namespace ClaudeCode.Cli
                 while (_state == ProcessState.Running && (line = reader.ReadLine()) != null)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
+                    Diagnostics.Log("DIAG-MSG", line.Length > 500 ? line.Substring(0, 500) + "..." : line);
                     try
                     {
                         ProcessNdjsonLine(line);
@@ -646,6 +649,7 @@ namespace ClaudeCode.Cli
                 while (_state == ProcessState.Running && (line = reader.ReadLine()) != null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[CLI stderr] {line}");
+                    Diagnostics.Log("DIAG-STDERR", line);
                 }
             }
             catch { }
@@ -691,6 +695,7 @@ namespace ClaudeCode.Cli
             var oldState = _state;
             if (oldState == newState) return;
             _state = newState;
+            Diagnostics.Log("DIAG-STATE", $"{oldState} -> {newState}");
 
             List<ICliStateListener> listeners;
             lock (_lock) { listeners = new List<ICliStateListener>(_stateListeners); }

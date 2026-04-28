@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -105,24 +106,50 @@ namespace ClaudeCode.UI.Dialogs
             {
                 if (!File.Exists(path)) return;
                 var json = JObject.Parse(File.ReadAllText(path));
-                var servers = json["mcpServers"] as JObject;
-                if (servers == null) return;
 
-                foreach (var kv in servers)
+                // Eclipse fix #9: read root-level mcpServers (the location the CLI writes for `--scope user`)
+                var added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var rootServers = json["mcpServers"] as JObject;
+                if (rootServers != null)
                 {
-                    var cfg = kv.Value as JObject;
-                    if (cfg == null) continue;
-                    list.Items.Add(new ServerRow
+                    foreach (var kv in rootServers)
                     {
-                        Name = kv.Key,
-                        Command = cfg.Value<string>("command") ?? "",
-                        Args = cfg["args"] is JArray args ? string.Join(" ", args) : "",
-                        Env = FormatEnv(cfg["env"] as JObject)
-                    });
+                        if (kv.Value is JObject cfg && added.Add(kv.Key))
+                            list.Items.Add(BuildRow(kv.Key, cfg));
+                    }
+                }
+
+                // Also read legacy projects[<currentDir>].mcpServers (older CLI versions wrote here),
+                // de-duplicating against the root-level entries above. Only relevant for the global file.
+                if (path == _globalPath)
+                {
+                    var projects = json["projects"] as JObject;
+                    if (projects != null)
+                    {
+                        var cwd = System.IO.Directory.GetCurrentDirectory();
+                        var project = projects[cwd] as JObject ?? projects.Properties().Select(p => p.Value as JObject).FirstOrDefault();
+                        var projServers = project?["mcpServers"] as JObject;
+                        if (projServers != null)
+                        {
+                            foreach (var kv in projServers)
+                            {
+                                if (kv.Value is JObject cfg && added.Add(kv.Key))
+                                    list.Items.Add(BuildRow(kv.Key, cfg));
+                            }
+                        }
+                    }
                 }
             }
             catch { }
         }
+
+        private ServerRow BuildRow(string name, JObject cfg) => new ServerRow
+        {
+            Name = name,
+            Command = cfg.Value<string>("command") ?? "",
+            Args = cfg["args"] is JArray args ? string.Join(" ", args) : "",
+            Env = FormatEnv(cfg["env"] as JObject)
+        };
 
         private string FormatEnv(JObject? env)
         {

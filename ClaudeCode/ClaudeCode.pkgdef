@@ -1,0 +1,60 @@
+; Claude Code Package Registration
+
+[$RootKey$\Packages\{B1C2D3E4-F5A6-7890-BCDE-F12345678901}]
+@="ClaudeCodePackage"
+"InprocServer32"="$WinDir$\SYSTEM32\MSCOREE.DLL"
+"Class"="ClaudeCode.ClaudeCodePackage"
+"CodeBase"="$PackageFolder$\ClaudeCode.dll"
+"AllowsBackgroundLoad"=dword:00000001
+
+; Menus - load from managed resource "Menus.ctmenu" embedded in the DLL
+[$RootKey$\Menus]
+"{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"=", Menus.ctmenu, 1"
+
+; Tool Window (Transient=false for persistence)
+[$RootKey$\ToolWindows\{C1D2E3F4-A5B6-7890-CDEF-123456789012}]
+@="{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"
+"Style"="Tabbed"
+"Window"="3ae79031-e1bc-11d0-8f78-00a0c9110057"
+"Transient"=dword:00000000
+
+; Tool Window Visibility - auto-show when solution loaded
+[$RootKey$\ToolWindows\{C1D2E3F4-A5B6-7890-CDEF-123456789012}\Visibility]
+"{f1536ef8-92ec-443c-9ed7-fdadf150da82}"=dword:00000001
+"{adfc4e64-0397-11d1-9f4e-00a0c911004f}"=dword:00000001
+
+; AutoLoad on solution loaded
+[$RootKey$\AutoLoadPackages\{f1536ef8-92ec-443c-9ed7-fdadf150da82}]
+"{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"=dword:00000002
+
+; Also autoload on NoSolution context
+[$RootKey$\AutoLoadPackages\{adfc4e64-0397-11d1-9f4e-00a0c911004f}]
+"{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"=dword:00000002
+
+; Binding Path
+[$RootKey$\BindingPaths\{B1C2D3E4-F5A6-7890-BCDE-F12345678901}]
+"$PackageFolder$"=""
+
+; Options Page: Tools > Options > Claude Code > General
+[$RootKey$\ToolsOptionsPages\Claude Code]
+@="Claude Code"
+"Package"="{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"
+"Sort"=dword:00000050
+
+[$RootKey$\ToolsOptionsPages\Claude Code\General]
+@="General"
+"Package"="{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"
+"Page"="{E3F4A5B6-C7D8-9012-EF01-345678901234}"
+"Sort"=dword:00000050
+
+; Automation properties (required for supportsAutomation=true)
+[$RootKey$\AutomationProperties\Claude Code]
+@="Claude Code"
+"Name"="Claude Code"
+"Package"="{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"
+
+[$RootKey$\AutomationProperties\Claude Code\General]
+@="General"
+"Name"="Claude Code.General"
+"Package"="{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"
+"ProfileSave"=dword:00000001
