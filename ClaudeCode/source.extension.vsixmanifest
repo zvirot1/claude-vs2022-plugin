@@ -2,7 +2,7 @@
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"
                  xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Id="ClaudeCode.B1C2D3E4-F5A6-7890-BCDE-F12345678901" Version="1.0.2" Language="en-US"
+    <Identity Id="ClaudeCode.B1C2D3E4-F5A6-7890-BCDE-F12345678901" Version="1.0.5" Language="en-US"
               Publisher="Anthropic" />
     <DisplayName>Claude Code</DisplayName>
     <Description xml:space="preserve">AI coding assistant powered by Claude. Chat with Claude directly in Visual Studio 2022, get code explanations, reviews, refactoring suggestions, and more.</Description>
