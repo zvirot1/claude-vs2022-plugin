@@ -253,6 +253,9 @@ namespace ClaudeCode.UI
                         case "change_model":
                             HandleChangeModel(dataJson);
                             break;
+                        case "set_attach_active_file":
+                            HandleSetAttachActiveFile(dataJson);
+                            break;
                         case "rename_session":
                             HandleRenameSession(dataJson);
                             break;
@@ -299,6 +302,10 @@ namespace ClaudeCode.UI
             // Round 3: send initial effort level
             var initialEffort = string.IsNullOrEmpty(settings.EffortLevel) ? "auto" : settings.EffortLevel;
             _bridge?.SendToWebview("effort_changed", JsonConvert.SerializeObject(new { effort = initialEffort }));
+            // IntelliJ Round 7: send Active-file toggle state + start watching for editor switches
+            _bridge?.SendToWebview("attach_active_file_changed",
+                JsonConvert.SerializeObject(new { enabled = settings.AttachActiveFile }));
+            InitActiveFileListener();
             // Only start CLI if not already running OR starting (Eclipse fix #10: avoid races
             // where webview_ready fires twice during slow startup → duplicate CLI processes).
             if (_cliManager == null || !_cliManager.IsRunningOrStarting)
@@ -571,6 +578,14 @@ namespace ClaudeCode.UI
                 }
             }
 
+            // IntelliJ Round 7: prepend the active editor file if user enabled "Attach active file"
+            if (Settings.ClaudeSettings.Instance.AttachActiveFile)
+            {
+                var activeCtx = BuildActiveFileContext();
+                if (!string.IsNullOrEmpty(activeCtx))
+                    text = activeCtx + "\n" + text;
+            }
+
             // Handle file attachments context
             var attachmentCtx = _service?.AttachmentManager.BuildFileContext();
             if (!string.IsNullOrEmpty(attachmentCtx))
@@ -581,6 +596,101 @@ namespace ClaudeCode.UI
 
             _model?.AddUserMessage(text);
             _cliManager?.SendMessage(text);
+        }
+
+        // ==================== Active File Pin (Amazon Q parity, IntelliJ Round 7) ====================
+
+        private EnvDTE.WindowEvents? _windowEvents;
+        private string? _lastActiveFilePath;
+
+        /// <summary>Subscribe to DTE WindowEvents so we can push the currently-focused
+        /// file to the webview as the user switches editor tabs.</summary>
+        private void InitActiveFileListener()
+        {
+            try
+            {
+                ThreadHelper.ThrowIfNotOnUIThread();
+                if (ClaudeCodePackage.Instance == null) return;
+                ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    var dte = await ClaudeCodePackage.Instance.GetServiceAsync(typeof(EnvDTE.DTE)) as EnvDTE80.DTE2;
+                    if (dte == null) return;
+                    _windowEvents = dte.Events.WindowEvents;
+                    _windowEvents.WindowActivated += OnDteWindowActivated;
+                    // Push the current active file once on startup
+                    SendActiveFileToWebview(GetCurrentActiveFile(dte));
+                });
+            }
+            catch (Exception ex) { DebugLog($"InitActiveFileListener error: {ex.Message}"); }
+        }
+
+        private void OnDteWindowActivated(EnvDTE.Window gotFocus, EnvDTE.Window lostFocus)
+        {
+            try
+            {
+                ThreadHelper.ThrowIfNotOnUIThread();
+                if (gotFocus?.Document == null) return;
+                SendActiveFileToWebview(gotFocus.Document.FullName);
+            }
+            catch { }
+        }
+
+        private string? GetCurrentActiveFile(EnvDTE80.DTE2 dte)
+        {
+            try
+            {
+                ThreadHelper.ThrowIfNotOnUIThread();
+                return dte.ActiveDocument?.FullName;
+            }
+            catch { return null; }
+        }
+
+        private void SendActiveFileToWebview(string? path)
+        {
+            _lastActiveFilePath = path;
+            if (string.IsNullOrEmpty(path))
+            {
+                _bridge?.SendToWebview("active_file_changed", "{\"path\":null,\"name\":null}");
+                return;
+            }
+            var name = System.IO.Path.GetFileName(path);
+            _bridge?.SendToWebview("active_file_changed",
+                JsonConvert.SerializeObject(new { path = path, name = name }));
+        }
+
+        /// <summary>Build &lt;file path="rel"&gt;contents&lt;/file&gt; for the active editor file.</summary>
+        private string BuildActiveFileContext()
+        {
+            try
+            {
+                var path = _lastActiveFilePath;
+                if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return "";
+                var content = System.IO.File.ReadAllText(path);
+                var rel = path!;
+                var cwd = GetWorkingDirectory();
+                if (!string.IsNullOrEmpty(cwd) && rel.StartsWith(cwd, StringComparison.OrdinalIgnoreCase))
+                    rel = rel.Substring(cwd.Length).TrimStart('\\', '/');
+                return $"<file path=\"{rel.Replace("\"", "&quot;")}\">\n{content}\n</file>\n";
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"BuildActiveFileContext failed: {ex.Message}");
+                return "";
+            }
+        }
+
+        private void HandleSetAttachActiveFile(string dataJson)
+        {
+            try
+            {
+                var data = JObject.Parse(dataJson);
+                var enabled = data.Value<bool?>("enabled") ?? false;
+                var settings = Settings.ClaudeSettings.Instance;
+                settings.AttachActiveFile = enabled;
+                settings.Save();
+            }
+            catch { }
         }
 
         private void HandleNewSession()

@@ -1830,3 +1830,35 @@ body.light .hljs-meta { color: #e50000; }
     object-fit: contain;
 }
 .user-attached-image:hover { transform: scale(1.02); border-color: var(--claude-orange); }
+
+/* IntelliJ Round 7 / Amazon Q parity: Active file bar above the input. */
+.active-file-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 0;
+    font-size: 11px;
+    color: var(--text-secondary, #888);
+}
+.active-file-bar.hidden { display: none; }
+.active-file-icon { flex-shrink: 0; }
+.active-file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--claude-orange);
+    font-family: 'Cascadia Mono', 'Consolas', monospace;
+    font-size: 11px;
+}
+.active-file-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+.active-file-toggle input[type="checkbox"] { margin: 0; cursor: pointer; }
+.active-file-toggle-text { font-size: 11px; color: var(--text-secondary, #888); }
+.active-file-toggle:hover .active-file-toggle-text { color: var(--text-primary, inherit); }

@@ -53,6 +53,11 @@ namespace ClaudeCode.Settings
         /// Can also be toggled via env var CLAUDE_DIAG=1 without changing this setting.</summary>
         public bool DiagEnabled { get; set; } = false;
 
+        /// <summary>IntelliJ Round 7 / Amazon Q parity: when ON, the file currently open
+        /// in the code editor is auto-attached as `&lt;file path="..."&gt;...&lt;/file&gt;` context
+        /// to every outgoing message. Off by default to avoid surprising token costs.</summary>
+        public bool AttachActiveFile { get; set; } = false;
+
         public static ClaudeSettings Instance
         {
             get

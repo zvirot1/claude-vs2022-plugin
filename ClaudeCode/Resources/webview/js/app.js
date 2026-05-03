@@ -37,6 +37,9 @@
     var dropOverlay = document.getElementById('drop-overlay');
     var historyBtn = document.getElementById('history-btn');
     var headerStopBtn = document.getElementById('header-stop-btn');
+    var activeFileBar = document.getElementById('active-file-bar');
+    var activeFileNameEl = document.getElementById('active-file-name');
+    var activeFileToggle = document.getElementById('active-file-toggle');
     var newTabBtn = document.getElementById('new-tab-btn');
 
     // ==================== State ====================
@@ -438,6 +441,15 @@
 
         // C1: Click model badge to change / add custom model
         setupModelBadge();
+
+        // IntelliJ Round 7: Active File chip
+        bridge.on('active_file_changed', handleActiveFileChanged);
+        bridge.on('attach_active_file_changed', handleAttachActiveFileChanged);
+        if (activeFileToggle) {
+            activeFileToggle.addEventListener('change', function () {
+                bridge.sendToJava('set_attach_active_file', { enabled: activeFileToggle.checked });
+            });
+        }
         bridge.on('model_changed', function (data) {
             if (sessionModel && data && data.model) sessionModel.textContent = data.model;
         });
@@ -477,6 +489,27 @@
 
     var MODE_LABELS = { 'default': 'Ask', 'acceptEdits': 'Auto', 'plan': 'Plan' };
     var MODE_CYCLE = ['default', 'acceptEdits', 'plan'];
+
+    // ==================== Active File Pin (IntelliJ Round 7 / Amazon Q parity) ====================
+
+    function handleActiveFileChanged(data) {
+        if (!activeFileBar) return;
+        if (!data || !data.name) {
+            activeFileBar.classList.add('hidden');
+            if (activeFileNameEl) { activeFileNameEl.textContent = ''; activeFileNameEl.removeAttribute('title'); }
+            return;
+        }
+        if (activeFileNameEl) {
+            activeFileNameEl.textContent = data.name;
+            if (data.path) activeFileNameEl.title = data.path;
+        }
+        activeFileBar.classList.remove('hidden');
+    }
+
+    function handleAttachActiveFileChanged(data) {
+        if (!activeFileToggle || !data) return;
+        activeFileToggle.checked = !!data.enabled;
+    }
 
     // C1: Click model badge → prompt for model name (accepts preset or custom). Saved in C# settings.
     function setupModelBadge() {
@@ -1294,6 +1327,10 @@
         if (role === 'user') {
             // User messages: render as plain text (no markdown)
             var text = extractTextFromMessage(data);
+            // IntelliJ Round 7: hide auto-attached file-context XML from the bubble.
+            // We still send <file path="...">...</file> blocks to the CLI but the user
+            // shouldn't see their own pasted file content cluttering the chat history.
+            text = text.replace(/<file[^>]*>[\s\S]*?<\/file>\s*/g, '').trim();
             contentEl.textContent = text;
         } else if (role === 'assistant') {
             var text = extractTextFromMessage(data);
