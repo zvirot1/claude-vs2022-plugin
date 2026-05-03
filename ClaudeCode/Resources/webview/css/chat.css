@@ -1818,3 +1818,15 @@ body.light .hljs-meta { color: #e50000; }
 .welcome-tile { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid rgba(128,128,128,0.25); border-radius: 6px; font-size: 12px; background: rgba(128,128,128,0.05); }
 .welcome-tile .wt-k { font-family: 'Consolas', monospace; font-weight: 600; color: var(--claude-orange); min-width: 32px; text-align: center; }
 .welcome-tile .wt-t { opacity: 0.85; }
+
+/* Eclipse fix #11: inline images in user message bubble */
+.user-image-gallery { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.user-attached-image {
+    max-width: 200px; max-height: 200px;
+    border-radius: 6px;
+    border: 1px solid rgba(128,128,128,0.3);
+    cursor: pointer;
+    transition: transform 0.1s ease;
+    object-fit: contain;
+}
+.user-attached-image:hover { transform: scale(1.02); border-color: var(--claude-orange); }

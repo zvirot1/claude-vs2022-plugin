@@ -236,11 +236,15 @@
         // Include attached images if any
         if (state.attachedImages.length > 0) {
             var imageData = [];
+            // Eclipse fix #11: keep the dataUrls so we can render the images in the user bubble
+            state._pendingUserImages = [];
             for (var i = 0; i < state.attachedImages.length; i++) {
                 imageData.push(state.attachedImages[i].bytes);
+                state._pendingUserImages.push(state.attachedImages[i].dataUrl);
             }
             bridge.sendToJava('send_message', { message: text, images: imageData });
         } else {
+            state._pendingUserImages = null;
             bridge.sendToJava('send_message', { message: text });
         }
 
@@ -871,6 +875,38 @@
         hideWelcome();
         var el = createMessageElement('user', data);
         el.setAttribute('data-message-index', state.messageIndex++);
+
+        // Eclipse fix #11: if the user just sent images with this message, render them
+        // inline as thumbnails in the bubble (click → open in new browser tab/system viewer).
+        if (state._pendingUserImages && state._pendingUserImages.length > 0) {
+            var contentEl = el.querySelector('.message-content') || el;
+            var gallery = document.createElement('div');
+            gallery.className = 'user-image-gallery';
+            for (var i = 0; i < state._pendingUserImages.length; i++) {
+                var dataUrl = state._pendingUserImages[i];
+                var img = document.createElement('img');
+                img.className = 'user-attached-image';
+                img.src = dataUrl;
+                img.alt = 'Attached image ' + (i + 1);
+                img.title = 'Click to open in new tab';
+                (function (url) {
+                    img.addEventListener('click', function () {
+                        try {
+                            var w = window.open();
+                            if (w) {
+                                w.document.write('<title>Claude attachment</title>'
+                                    + '<style>body{margin:0;background:#222;display:flex;align-items:center;justify-content:center;min-height:100vh}img{max-width:100%;max-height:100vh}</style>'
+                                    + '<img src="' + url + '"/>');
+                            }
+                        } catch (e) { /* ignore — may be blocked by VS WebView */ }
+                    });
+                })(dataUrl);
+                gallery.appendChild(img);
+            }
+            contentEl.appendChild(gallery);
+            state._pendingUserImages = null;
+        }
+
         messagesContainer.appendChild(el);
         scrollToBottom();
     }

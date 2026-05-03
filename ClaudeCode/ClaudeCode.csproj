@@ -74,4 +74,21 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <!-- Manually import the VSSDK targets so msbuild knows how to build a real VSIX container.
+       Microsoft.NET.Sdk doesn't import these automatically. -->
+  <PropertyGroup>
+    <CreateVsixContainer>true</CreateVsixContainer>
+    <DeployExtension>false</DeployExtension>
+    <IsProductComponent>false</IsProductComponent>
+    <VsixType>v3</VsixType>
+    <!-- The VsSDK CreateClientEnabledPkgFiles task needs an explicit output dir -->
+    <ClientEnabledPkgOutputDirectory>$(IntermediateOutputPath)</ClientEnabledPkgOutputDirectory>
+    <IncludeClientEnabledPkgFile>false</IncludeClientEnabledPkgFile>
+    <IncludePkgdefInVSIXContainer>true</IncludePkgdefInVSIXContainer>
+    <CopyVsixManifestToOutput>true</CopyVsixManifestToOutput>
+    <IncludeTemplatesInVsixContainer>false</IncludeTemplatesInVsixContainer>
+    <SchemaVersion>2.0</SchemaVersion>
+  </PropertyGroup>
+  <Import Project="$(NuGetPackageRoot)microsoft.vssdk.buildtools\17.0.5232\tools\vssdk\Microsoft.VsSDK.targets" />
+
 </Project>
