@@ -1156,8 +1156,10 @@ html, body {
 }
 
 #input-wrapper {
+    /* Column container so pinned chips can sit inside the input frame
+     * above the actual textarea row (Amazon Q parity). */
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
     gap: 6px;
     background: var(--bg-input);
     border: 1px solid var(--border-input);
@@ -1168,6 +1170,12 @@ html, body {
 
 #input-wrapper:focus-within {
     border-color: var(--border-input-focus);
+}
+
+#input-wrapper .input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
 }
 
 #message-input {
@@ -1556,7 +1564,26 @@ html, body {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    padding: 6px 12px 0;
+    /* No outer padding — we live inside #input-wrapper which already pads. */
+    padding: 0;
+}
+.file-chips.hidden { display: none; }
+
+/* Active file pinned chip (Amazon Q-style) — same .file-chip base, distinguished
+ * by a blue accent + small "current file" hint so users see it was auto-pinned. */
+.file-chip-active {
+    background: rgba(59, 130, 246, 0.12) !important;
+    border-color: #3b82f6 !important;
+    color: #3b82f6 !important;
+}
+.file-chip-active .file-chip-name { color: #3b82f6; font-weight: 500; }
+.file-chip-icon { font-size: 10px; line-height: 1; flex-shrink: 0; }
+.file-chip-hint {
+    font-size: 10px;
+    color: var(--text-secondary, #888);
+    opacity: 0.75;
+    margin-left: 2px;
+    flex-shrink: 0;
 }
 
 .file-chip {
@@ -1831,34 +1858,4 @@ body.light .hljs-meta { color: #e50000; }
 }
 .user-attached-image:hover { transform: scale(1.02); border-color: var(--claude-orange); }
 
-/* IntelliJ Round 7 / Amazon Q parity: Active file bar above the input. */
-.active-file-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px 0;
-    font-size: 11px;
-    color: var(--text-secondary, #888);
-}
-.active-file-bar.hidden { display: none; }
-.active-file-icon { flex-shrink: 0; }
-.active-file-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--claude-orange);
-    font-family: 'Cascadia Mono', 'Consolas', monospace;
-    font-size: 11px;
-}
-.active-file-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
-    user-select: none;
-    flex-shrink: 0;
-}
-.active-file-toggle input[type="checkbox"] { margin: 0; cursor: pointer; }
-.active-file-toggle-text { font-size: 11px; color: var(--text-secondary, #888); }
-.active-file-toggle:hover .active-file-toggle-text { color: var(--text-primary, inherit); }
+/* (Old .active-file-bar styles removed — replaced by .file-chip-active inside .file-chips.) */

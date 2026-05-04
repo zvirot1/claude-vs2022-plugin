@@ -578,8 +578,10 @@ namespace ClaudeCode.UI
                 }
             }
 
-            // IntelliJ Round 7: prepend the active editor file if user enabled "Attach active file"
-            if (Settings.ClaudeSettings.Instance.AttachActiveFile)
+            // IntelliJ Round 7 / Amazon Q parity: the webview decides per-message whether to
+            // attach the active file (via the chip's X button). Settings flag is unused.
+            var includeActive = data.Value<bool?>("includeActiveFile") ?? false;
+            if (includeActive)
             {
                 var activeCtx = BuildActiveFileContext();
                 if (!string.IsNullOrEmpty(activeCtx))

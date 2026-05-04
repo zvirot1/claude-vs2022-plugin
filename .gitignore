@@ -10,3 +10,4 @@ ClaudeCode/obj/
 
 # Installers build scratch
 /tmp/
+jdbc-server.log*
