@@ -22,10 +22,11 @@ namespace ClaudeCode.UI.Dialogs
         private readonly string _projectDir;
         private readonly string _home;
 
-        // Local Skills
+        // Local Skills (Eclipse Round 8: configurable folder + header label)
         private readonly ListView _skillsList;
         private readonly TabControl _skillDetailTabs;
         private readonly TextBox _skillInfoBox, _skillMdBox, _skillLicenseBox;
+        private TextBlock? _skillsHeaderLabel;
 
         // Installed Plugins
         private readonly ListView _installedList;
@@ -70,11 +71,20 @@ namespace ClaudeCode.UI.Dialogs
             _skillDetailTabs = MakeDetailTabs(
                 ("Info", _skillInfoBox), ("SKILL.md", _skillMdBox), ("LICENSE", _skillLicenseBox));
 
-            var skillRefresh = Btn("Refresh", () => LoadLocalSkills());
+            // Eclipse Round 8: header label showing the active skills folder + Browse button.
+            _skillsHeaderLabel = new TextBlock
+            {
+                Text = "Custom skills from " + GetCurrentSkillsFolder(),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 0, 0, 4),
+                FontSize = 11
+            };
+            var skillRefresh = Btn("Refresh", () => { UpdateSkillsHeader(); LoadLocalSkills(); });
             var skillOpen = Btn("Open Folder", OpenSkillsFolder);
+            var skillBrowse = Btn("Browse…", BrowseSkillsFolder);
 
-            mainTabs.Items.Add(MakeSplitTab("Local Skills", _skillsList,
-                _skillDetailTabs, new[] { skillRefresh, skillOpen }));
+            mainTabs.Items.Add(MakeSplitTabWithHeader("Local Skills", _skillsHeaderLabel, _skillsList,
+                _skillDetailTabs, new[] { skillRefresh, skillOpen, skillBrowse }));
 
             _skillsList.SelectionChanged += (_, __) => ShowSkillDetail();
 
@@ -212,6 +222,23 @@ namespace ClaudeCode.UI.Dialogs
             return MakeSplitTabRaw(header, leftPanel, detailTabs);
         }
 
+        /// <summary>Variant of MakeSplitTab with a label above the list (e.g. "Custom skills from ..."). </summary>
+        private TabItem MakeSplitTabWithHeader(string header, UIElement headerLabel, ListView list,
+                                                TabControl detailTabs, Button[] buttons)
+        {
+            var leftPanel = new DockPanel();
+            DockPanel.SetDock(headerLabel, Dock.Top);
+            leftPanel.Children.Add(headerLabel);
+
+            var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+            foreach (var btn in buttons) toolbar.Children.Add(btn);
+            DockPanel.SetDock(toolbar, Dock.Bottom);
+            leftPanel.Children.Add(toolbar);
+
+            leftPanel.Children.Add(list);
+            return MakeSplitTabRaw(header, leftPanel, detailTabs);
+        }
+
         private TabItem MakeSplitTabRaw(string header, UIElement left, UIElement right)
         {
             var grid = new Grid();
@@ -236,13 +263,50 @@ namespace ClaudeCode.UI.Dialogs
 
         #region Local Skills
 
+        /// <summary>Resolve the active user-skills folder: settings override or default ~/.claude/skills/. </summary>
+        private string GetCurrentSkillsFolder()
+        {
+            var configured = Settings.ClaudeSettings.Instance.SkillsFolder;
+            if (!string.IsNullOrWhiteSpace(configured))
+                return configured;
+            return Path.Combine(_home, ".claude", "skills");
+        }
+
+        private void UpdateSkillsHeader()
+        {
+            if (_skillsHeaderLabel != null)
+                _skillsHeaderLabel.Text = "Custom skills from " + GetCurrentSkillsFolder();
+        }
+
+        /// <summary>Show a folder picker, persist the chosen path, refresh the list. </summary>
+        private void BrowseSkillsFolder()
+        {
+            var current = GetCurrentSkillsFolder();
+            // WPF doesn't ship a native folder dialog; use WinForms FolderBrowserDialog.
+            using var dlg = new System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "Select Local Skills folder",
+                ShowNewFolderButton = true,
+                SelectedPath = Directory.Exists(current) ? current : _home
+            };
+            if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+            var chosen = dlg.SelectedPath;
+            if (string.IsNullOrWhiteSpace(chosen)) return;
+
+            var settings = Settings.ClaudeSettings.Instance;
+            settings.SkillsFolder = chosen;
+            settings.Save();
+            UpdateSkillsHeader();
+            LoadLocalSkills();
+        }
+
         private void LoadLocalSkills()
         {
             _skillsList.Items.Clear();
             var dirs = new[]
             {
                 Path.Combine(_projectDir, ".claude", "skills"),
-                Path.Combine(_home, ".claude", "skills")
+                GetCurrentSkillsFolder()
             };
 
             foreach (var dir in dirs)
@@ -302,9 +366,19 @@ namespace ClaudeCode.UI.Dialogs
 
         private void OpenSkillsFolder()
         {
-            var dir = Path.Combine(_projectDir, ".claude", "skills");
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            try { Process.Start("explorer.exe", dir); } catch { }
+            // Eclipse Round 8: respect the configured user-skills folder + auto-create
+            // so the action always has something to open.
+            var dir = GetCurrentSkillsFolder();
+            try
+            {
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Failed to open folder: " + ex.Message + "\n\nPath: " + dir,
+                    "Open folder", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         #endregion

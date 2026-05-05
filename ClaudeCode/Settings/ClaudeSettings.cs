@@ -58,6 +58,10 @@ namespace ClaudeCode.Settings
         /// to every outgoing message. Off by default to avoid surprising token costs.</summary>
         public bool AttachActiveFile { get; set; } = false;
 
+        /// <summary>Eclipse Round 8: configurable user-skills folder for the SkillsDialog.
+        /// Empty string = use default (~/.claude/skills/, matching CLI + IntelliJ convention).</summary>
+        public string SkillsFolder { get; set; } = "";
+
         public static ClaudeSettings Instance
         {
             get

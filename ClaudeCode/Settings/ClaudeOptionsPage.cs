@@ -63,6 +63,12 @@ namespace ClaudeCode.Settings
         [PasswordPropertyText(true)]
         public string ApiKey { get; set; } = "";
 
+        [Category("Skills")]
+        [DisplayName("Skills folder")]
+        [Description("Folder scanned by the Skills dialog for user-defined skills. " +
+                     "Leave empty to use the default %USERPROFILE%\\.claude\\skills\\ (matches the Claude CLI convention).")]
+        public string SkillsFolder { get; set; } = "";
+
         protected override void OnApply(PageApplyEventArgs e)
         {
             base.OnApply(e);
@@ -78,6 +84,7 @@ namespace ClaudeCode.Settings
             settings.ShowCost = ShowCost;
             settings.ShowStreaming = ShowStreaming;
             settings.ApiKey = ApiKey;
+            settings.SkillsFolder = SkillsFolder ?? "";
             settings.Save();
 
             // Also update claude_cli_path.txt in the extension directory
@@ -102,6 +109,7 @@ namespace ClaudeCode.Settings
             ShowCost = settings.ShowCost;
             ShowStreaming = settings.ShowStreaming;
             ApiKey = settings.ApiKey;
+            SkillsFolder = settings.SkillsFolder ?? "";
 
             // If CliPath is empty, show current resolved path from the path file
             if (string.IsNullOrEmpty(CliPath))
