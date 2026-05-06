@@ -38,6 +38,11 @@ namespace ClaudeCode.Session
                     {
                         var content = message["content"];
                         string text = ExtractText(content);
+                        // IntelliJ port (c79d6e0 + b97fbe6): strip the noise prefixes the CLI
+                        // and the plugin prepend to user messages (file-XML attachments and
+                        // [Active editor context: ...] blocks). The raw cliText is in the JSONL
+                        // but the user shouldn't see it in their own bubbles on replay.
+                        text = StripPrependedNoise(text);
                         if (string.IsNullOrEmpty(text)) continue;
                         var block = new MessageBlock(MessageBlock.Role.User);
                         var seg = new MessageBlock.TextSegment();
@@ -96,6 +101,32 @@ namespace ClaudeCode.Session
                 return sb.ToString().TrimEnd();
             }
             return "";
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex FileBlockRx =
+            new(@"^\s*<file\b[^>]*>[\s\S]*?</file>\s*",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex ActiveEditorCtxRx =
+            new(@"^\s*\[Active editor context:[\s\S]*?\]\s*",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// Removes leading <c>&lt;file path=&quot;...&quot;&gt;...&lt;/file&gt;</c> blocks
+        /// (auto-attached active-file / @-mention context) and <c>[Active editor context: ...]</c>
+        /// markers (CLI-injected) so replayed user bubbles show only the actual user prompt.
+        /// Idempotent on already-clean text.
+        /// </summary>
+        public static string StripPrependedNoise(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            var prev = (string?)null;
+            while (prev != text)
+            {
+                prev = text;
+                text = FileBlockRx.Replace(text, "");
+                text = ActiveEditorCtxRx.Replace(text, "");
+            }
+            return text.Trim();
         }
 
         private static string? BuildPath(string sessionId, string workingDir)

@@ -351,7 +351,10 @@ namespace ClaudeCode.UI.Dialogs
             {
                 Info = info;
                 MessageCount = info.MessageCount;
-                Summary = info.Summary ?? "(no summary)";
+                // IntelliJ port (b97fbe6): defensively strip noise prefixes here too, in case
+                // the SessionStore was populated by an earlier version that didn't clean them.
+                var raw = ClaudeCode.Session.SessionJsonlLoader.StripPrependedNoise(info.Summary ?? "");
+                Summary = string.IsNullOrEmpty(raw) ? "(no summary)" : raw;
                 ModelShort = ShortenModel(info.Model);
                 DateText = info.LastActiveTime > 0
                     ? DateTimeOffset.FromUnixTimeMilliseconds(info.LastActiveTime).LocalDateTime.ToString("yyyy-MM-dd HH:mm")

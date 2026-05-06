@@ -330,9 +330,11 @@
             }
         });
 
-        // Reconnect button
+        // Reconnect button — restart CLI with --resume <currentSessionId>, preserving the
+        // on-screen bubbles. (IntelliJ port — c79d6e0: previously sent 'new_session' which
+        // wiped chat AND lost --resume context.)
         reconnectBtn.addEventListener('click', function () {
-            bridge.sendToJava('new_session', {});
+            bridge.sendToJava('reconnect', {});
         });
 
         // Scroll to bottom button
@@ -953,7 +955,10 @@
     function handleAssistantMessageStarted(data) {
         hideWelcome();
         removeThinkingIndicator();
-        removeLoadingIndicator();
+        // IntelliJ port (ef00374): keep the 'Thinking...' indicator until the first text
+        // chunk or tool call actually appears — assistant_message_started fires before
+        // any content has arrived, so removing here would blink the indicator off in ms
+        // on a fast response. Removed in handleStreamingTextAppended / handleToolCallStarted.
         setStreamingState(true);
 
         var el = document.createElement('div');
@@ -1001,6 +1006,8 @@
         // streaming refs (currentAssistantEl == null), this delta arrived AFTER the message
         // was finalized (slow UI thread vs fast deltas). Drop it so we don't double-render.
         if (!state.currentAssistantEl) return;
+        // IntelliJ port (ef00374): first real content has arrived — drop 'Thinking...'.
+        removeLoadingIndicator();
 
         state.streamingTextBuffer += data.delta;
         renderMarkdown(state.currentContentEl, state.streamingTextBuffer);
@@ -1010,6 +1017,8 @@
     function handleToolCallStarted(data) {
         console.log('[TOOL_STARTED] toolId=' + data.toolId + ' toolName=' + data.toolName);
         if (!state.currentAssistantEl) return;
+        // IntelliJ port (ef00374): a tool call counts as 'first content arrived'.
+        removeLoadingIndicator();
 
         // DEDUP: skip if tool element with this ID already exists in the DOM
         if (data.toolId && document.querySelector('[data-tool-id="' + data.toolId + '"]')) {
@@ -1118,6 +1127,13 @@
 
         removeThinkingIndicator();
 
+        // IntelliJ port (4010624): remember this as the final assistant bubble so the
+        // completion footer attaches to the correct one (after all tools have finished).
+        var runningTool = document.querySelector('.tool-call.running, .tool-call[data-status="running"]');
+        if (!runningTool && state.currentAssistantEl) {
+            state.lastFinalAssistantEl = state.currentAssistantEl;
+        }
+
         // Create a new content element for text after tool calls, if needed
         state.currentAssistantEl = null;
         state.currentContentEl = null;
@@ -1125,7 +1141,6 @@
         // completes and no tool is still running. The 'result' event arrives 12-15s later
         // on slow networks/proxies — waiting for it leaves the red Stop button stale.
         // For tool-heavy turns (Agent etc.), the 'running' tool element keeps streaming=true.
-        var runningTool = document.querySelector('.tool-call.running, .tool-call[data-status="running"]');
         if (!runningTool) setStreamingState(false);
         scrollToBottom();
     }
@@ -1153,6 +1168,24 @@
         if (data.formattedCost) {
             statusCost.textContent = data.formattedCost;
             statusCost.classList.remove('hidden');
+        }
+
+        // IntelliJ port (4010624): visible completion footer under the final assistant bubble.
+        // Only attach to the last bubble (no running tools); idempotent — replaces existing footer.
+        if (!runningTool && state.lastFinalAssistantEl && state.lastFinalAssistantEl.parentNode) {
+            var existing = state.lastFinalAssistantEl.querySelector('.completion-footer');
+            if (existing) existing.parentNode.removeChild(existing);
+            var pieces = [];
+            if (data.formattedTokens) pieces.push(data.formattedTokens);
+            if (data.formattedDuration) pieces.push(data.formattedDuration);
+            if (data.formattedCost) pieces.push(data.formattedCost);
+            if (pieces.length > 0) {
+                var footer = document.createElement('div');
+                footer.className = 'completion-footer';
+                footer.innerHTML = '<span class="completion-check">✓</span> '
+                    + '<span class="completion-meta">' + pieces.join(' · ') + '</span>';
+                state.lastFinalAssistantEl.appendChild(footer);
+            }
         }
     }
 
@@ -2232,10 +2265,13 @@
         state.loadingEl = document.createElement('div');
         state.loadingEl.className = 'message message-assistant';
 
+        // IntelliJ port (ef00374): use the familiar 'Thinking...' label with the bouncing
+        // dots animation instead of a tiny spinner with 'Waiting for response...' that
+        // was easy to miss and removed too eagerly on a fast response.
         var indicator = document.createElement('div');
-        indicator.className = 'loading-indicator';
-        indicator.innerHTML = '<div class="loading-spinner"></div>' +
-            '<span>Waiting for response...</span>';
+        indicator.className = 'thinking-indicator';
+        indicator.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>' +
+            '<span class="thinking-text">Thinking...</span>';
 
         state.loadingEl.appendChild(indicator);
         messagesContainer.appendChild(state.loadingEl);

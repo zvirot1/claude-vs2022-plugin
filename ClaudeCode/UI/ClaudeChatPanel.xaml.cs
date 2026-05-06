@@ -836,26 +836,78 @@ namespace ClaudeCode.UI
                 // Resume most recent session
                 var sessions = _service?.SessionManager.ListSessions();
                 if (sessions != null && sessions.Count > 0)
-                {
                     sessionId = sessions[0].SessionId;
-                }
             }
+            if (string.IsNullOrEmpty(sessionId)) return;
 
-            if (!string.IsNullOrEmpty(sessionId))
+            // IntelliJ port (32ca7d9): the previous Resume implementation could leak state
+            // from the source session — stale storedConfig revived by a Reconnect, the model
+            // still holding the previous SessionId while CLI started, missing settings flags,
+            // and silent IOException on start. Now: always Stop, reset SessionInfo, apply
+            // current settings flags, load JSONL history, and surface IO errors.
+            try { _cliManager?.Stop(); } catch { }
+            try { _model?.Clear(); } catch { }
+            try { _service?.CheckpointManager.ClearCheckpoints(); } catch { }
+            try { _service?.EditDecisionManager.Clear(); } catch { }
+            _pendingToolInputs.Clear();
+
+            // Adopt the new session id BEFORE start so racing events use the right id.
+            try { _service?.SessionManager.TrackSession(sessionId!, GetWorkingDirectory()); } catch { }
+            if (_model != null)
             {
-                _model?.Clear();
-                _cliManager?.Stop();
-                _service?.CheckpointManager.ClearCheckpoints();
-
-                var cliPath = ClaudeCliManager.GetCliPath();
-                if (cliPath == null) return;
-
-                var config = new CliProcessConfig(cliPath, GetWorkingDirectory())
-                {
-                    ResumeSessionId = sessionId
-                };
-                try { _cliManager?.Start(config); } catch { }
+                _model.SessionInfo ??= new Model.SessionInfo(sessionId!);
+                _model.SessionInfo.SessionId = sessionId;
+                _model.SessionInfo.WorkingDirectory = GetWorkingDirectory();
             }
+
+            var cliPath = ClaudeCliManager.GetCliPath();
+            if (string.IsNullOrEmpty(cliPath))
+            {
+                _bridge?.SendToWebview("error", JsonConvert.SerializeObject(new
+                    { message = "Claude CLI path is not configured." }));
+                return;
+            }
+            var workingDir = GetWorkingDirectory();
+            var settings = Settings.ClaudeSettings.Instance;
+            var config = new CliProcessConfig(cliPath!, workingDir)
+            {
+                PermissionMode = settings.InitialPermissionMode == "default" ? null : settings.InitialPermissionMode,
+                Model = settings.SelectedModel != "default" ? settings.SelectedModel : null,
+                Effort = (string.IsNullOrEmpty(settings.EffortLevel) || settings.EffortLevel == "auto") ? null : settings.EffortLevel,
+                ResumeSessionId = sessionId
+            };
+
+            // Load history from JSONL so replayed bubbles show the past conversation.
+            try
+            {
+                var history = Session.SessionJsonlLoader.Load(sessionId!, workingDir);
+                if (history.Count > 0 && _model != null) _model.LoadHistory(history);
+            }
+            catch (Exception ex) { DebugLog($"Resume LoadHistory failed: {ex.Message}"); }
+
+            try { _cliManager?.Start(config); }
+            catch (Exception ex)
+            {
+                _bridge?.SendToWebview("error", JsonConvert.SerializeObject(new
+                    { message = "Failed to start CLI for resumed session: " + ex.Message }));
+                return;
+            }
+
+            // Persist new last-session-id for auto-resume on next launch.
+            try
+            {
+                settings.LastSessionIdPerInstance ??= new System.Collections.Generic.Dictionary<int, string>();
+                settings.LastSessionIdPerInstance[InstanceId] = sessionId!;
+                settings.Save();
+            }
+            catch { }
+
+            // Tell the webview which session is now active.
+            _bridge?.SendToWebview("session_initialized", JsonConvert.SerializeObject(new
+            {
+                sessionId = sessionId,
+                workingDirectory = workingDir
+            }));
         }
 
         private void HandleHistory()

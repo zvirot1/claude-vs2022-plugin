@@ -72,27 +72,69 @@ namespace ClaudeCode.Session
             _currentSession.MessageCount = model.MessageCount;
             _currentSession.Touch();
 
-            // Auto-generate summary from first user message
+            // Auto-generate summary from first user message — but only if neither the
+            // user nor the CLI has provided one. IntelliJ port (b97fbe6 + 3233fd4):
+            //  1) prefer a CLI-emitted summary if the JSONL contains one.
+            //  2) otherwise use the cleaned first user prompt (strip file-XML / active-editor
+            //     context noise so we don't show '<file path="...">...' as the title).
             if (string.IsNullOrEmpty(_currentSession.Summary))
             {
-                var messages = model.GetMessages();
-                foreach (var msg in messages)
+                var cliSummary = TryReadCliSummaryFromJsonl(_currentSession.SessionId, _currentSession.WorkingDirectory);
+                if (!string.IsNullOrEmpty(cliSummary))
                 {
-                    if (msg.MessageRole == MessageBlock.Role.User)
+                    _currentSession.Summary = cliSummary;
+                }
+                else
+                {
+                    var messages = model.GetMessages();
+                    foreach (var msg in messages)
                     {
-                        var text = msg.GetFullText().Trim();
-                        if (!string.IsNullOrEmpty(text))
+                        if (msg.MessageRole == MessageBlock.Role.User)
                         {
-                            _currentSession.Summary = text.Length > 60
-                                ? text.Substring(0, 57) + "..."
-                                : text;
-                            break;
+                            var text = SessionJsonlLoader.StripPrependedNoise(msg.GetFullText().Trim());
+                            if (!string.IsNullOrEmpty(text))
+                            {
+                                _currentSession.Summary = text.Length > 60
+                                    ? text.Substring(0, 57) + "..."
+                                    : text;
+                                break;
+                            }
                         }
                     }
                 }
             }
 
             _store.SaveSession(_currentSession);
+        }
+
+        /// <summary>Reads the last <c>{"type":"summary","summary":"..."}</c> entry from the
+        /// session's JSONL transcript. The CLI itself writes these — terse LLM-authored
+        /// titles that match the VS Code / CLI UX. Returns null if not found.</summary>
+        private static string? TryReadCliSummaryFromJsonl(string? sessionId, string? workingDir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(workingDir)) return null;
+                var encoded = workingDir!.Replace('\\', '-').Replace('/', '-').Replace(':', '-');
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var path = System.IO.Path.Combine(home, ".claude", "projects", encoded, sessionId + ".jsonl");
+                if (!System.IO.File.Exists(path)) return null;
+                string? best = null;
+                foreach (var line in System.IO.File.ReadAllLines(path))
+                {
+                    if (string.IsNullOrWhiteSpace(line) || !line.Contains("\"summary\"")) continue;
+                    try
+                    {
+                        var obj = Newtonsoft.Json.Linq.JObject.Parse(line);
+                        if (obj.Value<string>("type") != "summary") continue;
+                        var s = obj.Value<string>("summary");
+                        if (!string.IsNullOrEmpty(s)) best = s;   // last-one-wins
+                    }
+                    catch { }
+                }
+                return best;
+            }
+            catch { return null; }
         }
 
         public List<SessionInfo> ListSessions() => _store.ListSessions();

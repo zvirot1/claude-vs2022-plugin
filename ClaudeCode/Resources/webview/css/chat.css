@@ -1859,3 +1859,26 @@ body.light .hljs-meta { color: #e50000; }
 .user-attached-image:hover { transform: scale(1.02); border-color: var(--claude-orange); }
 
 /* (Old .active-file-bar styles removed — replaced by .file-chip-active inside .file-chips.) */
+
+/* IntelliJ port (4010624): visible completion footer under final assistant bubble. */
+.completion-footer {
+    margin-top: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text-secondary, #888);
+    background: rgba(34, 197, 94, 0.06);
+    border-left: 2px solid rgba(34, 197, 94, 0.6);
+    border-radius: 4px;
+    display: inline-block;
+    animation: completion-fade-in 0.25s ease-out;
+}
+.completion-check {
+    color: #22c55e;
+    font-weight: 600;
+    margin-right: 4px;
+}
+.completion-meta { opacity: 0.85; }
+@keyframes completion-fade-in {
+    from { opacity: 0; transform: translateY(-3px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
