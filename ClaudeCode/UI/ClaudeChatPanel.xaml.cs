@@ -57,6 +57,10 @@ namespace ClaudeCode.UI
         // Ensure only ONE panel instance is active globally PER tool window instance ID
         private static readonly ConcurrentDictionary<int, ClaudeChatPanel> _activeInstances = new();
 
+        /// <summary>Number of currently open Claude Code panels — used to enforce the
+        /// MaxOpenWindows cap before spawning another tool window.</summary>
+        public static int GetOpenWindowCount() => _activeInstances.Count;
+
         public static void UnregisterInstance(int id, ClaudeChatPanel panel)
         {
             if (_activeInstances.TryGetValue(id, out var cur) && cur == panel)
@@ -506,10 +510,26 @@ namespace ClaudeCode.UI
         /// Each instance has its own ClaudeChatPanel + per-instance ClaudeProjectService
         /// (independent CLI process and conversation). Round 3.
         /// </summary>
+        /// <summary>Hard cap on simultaneously-open Claude Code tool windows.
+        /// Beyond this, the 📋 button shows a one-line warning instead of opening another.</summary>
+        private const int MaxOpenWindows = 10;
+
         private void HandleNewConversationWindow()
         {
             var package = ClaudeCodePackage.Instance;
             if (package == null) return;
+
+            // Cap at MaxOpenWindows so the user can't spam the 📋 button into a runaway state.
+            // Counts active panel registrations (ClaudeChatPanel._activeInstances).
+            var open = ClaudeChatPanel.GetOpenWindowCount();
+            if (open >= MaxOpenWindows)
+            {
+                _bridge?.SendToWebview("system_message", JsonConvert.SerializeObject(new
+                {
+                    text = $"⚠ Reached the {MaxOpenWindows}-window cap. Close an existing Claude Code window first."
+                }));
+                return;
+            }
 
             ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
@@ -1740,19 +1760,54 @@ namespace ClaudeCode.UI
             // panel header + tab caption update without waiting for a Resume.
             try
             {
-                var current = _service?.SessionManager.CurrentSession?.Summary;
+                var sm = _service?.SessionManager;
+                var current = sm?.CurrentSession?.Summary;
+                DebugLog($"[Title] CurrentSession={(sm?.CurrentSession == null ? "null" : sm.CurrentSession.SessionId)} Summary='{current}' lastPushed='{_lastPushedTitle}'");
+
+                // If the SessionManager.CurrentSession was never initialized for this panel
+                // (TrackSession was never called for a fresh non-resumed session), bootstrap
+                // it now so SaveCurrentSession actually has somewhere to write the summary.
+                if (sm != null && sm.CurrentSession == null && !string.IsNullOrEmpty(_model?.SessionInfo?.SessionId))
+                {
+                    sm.TrackSession(_model!.SessionInfo!.SessionId!, GetWorkingDirectory());
+                    sm.SaveCurrentSession(_model!);
+                    current = sm.CurrentSession?.Summary;
+                    DebugLog($"[Title] bootstrapped Track+Save → Summary='{current}'");
+                }
+
+                // Also: if Summary is still empty but we have user messages, derive one and persist.
+                if (string.IsNullOrEmpty(current) && _model != null)
+                {
+                    foreach (var m in _model.GetMessages())
+                    {
+                        if (m.MessageRole == MessageBlock.Role.User)
+                        {
+                            var t = Session.SessionJsonlLoader.StripPrependedNoise(m.GetFullText().Trim());
+                            if (!string.IsNullOrEmpty(t))
+                            {
+                                current = t.Length > 60 ? t.Substring(0, 57) + "..." : t;
+                                if (sm?.CurrentSession != null) sm.CurrentSession.Summary = current;
+                                DebugLog($"[Title] derived from first user msg → '{current}'");
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 if (!string.IsNullOrEmpty(current) && current != _lastPushedTitle)
                 {
                     _lastPushedTitle = current;
+                    var sid = _model?.SessionInfo?.SessionId;
                     Dispatch(() =>
                     {
                         _bridge?.SendToWebview("session_renamed",
-                            JsonConvert.SerializeObject(new { sessionId = _model?.SessionInfo?.SessionId, newName = current }));
+                            JsonConvert.SerializeObject(new { sessionId = sid, newName = current }));
                         try { CaptionUpdater?.Invoke(current!); } catch { }
                     });
+                    DebugLog($"[Title] pushed '{current}' to webview");
                 }
             }
-            catch { }
+            catch (Exception ex) { DebugLog($"[Title] ex: {ex.Message}"); }
 
             Dispatch(() => _bridge?.SendToWebview("result_received", JsonConvert.SerializeObject(new
             {

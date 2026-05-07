@@ -109,10 +109,18 @@ namespace ClaudeCode
                     var s = Settings.ClaudeSettings.Instance;
                     var ids = s.OpenInstanceIds;
                     if (ids == null || ids.Count == 0) return;
+                    // Cap restored windows at 5 — keep the most-recent (= last added) ids.
+                    // Avoids spamming dozens of stale tabs on VS startup if the user once
+                    // opened many windows. The rest are simply forgotten.
+                    const int RestoreCap = 5;
+                    var distinct = ids.Distinct().ToList();
+                    var toRestore = distinct.Count <= RestoreCap
+                        ? distinct
+                        : distinct.GetRange(distinct.Count - RestoreCap, RestoreCap);
                     // Clear — ClaudeToolWindow ctor will re-add each one as it opens.
                     s.OpenInstanceIds = new System.Collections.Generic.List<int>();
                     s.Save();
-                    foreach (var id in ids.Distinct())
+                    foreach (var id in toRestore)
                     {
                         try { await ShowToolWindowAsync(typeof(ClaudeToolWindow), id, true, DisposalToken); }
                         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Restore] id={id} failed: {ex.Message}"); }
