@@ -1728,10 +1728,31 @@ namespace ClaudeCode.UI
             Dispatch(() => _bridge?.SendToWebview("assistant_message_completed", BuildMessageBlockJson(block)));
         }
 
+        private string? _lastPushedTitle;
+
         void IConversationListener.OnResultReceived(UsageInfo usage)
         {
             // Auto-save session after each turn
             try { _service?.SessionManager.SaveCurrentSession(_model!); } catch { }
+
+            // IntelliJ port (3233fd4): if SaveCurrentSession just learned a CLI auto-summary
+            // (or computed one from the first user message), push it to the webview so the
+            // panel header + tab caption update without waiting for a Resume.
+            try
+            {
+                var current = _service?.SessionManager.CurrentSession?.Summary;
+                if (!string.IsNullOrEmpty(current) && current != _lastPushedTitle)
+                {
+                    _lastPushedTitle = current;
+                    Dispatch(() =>
+                    {
+                        _bridge?.SendToWebview("session_renamed",
+                            JsonConvert.SerializeObject(new { sessionId = _model?.SessionInfo?.SessionId, newName = current }));
+                        try { CaptionUpdater?.Invoke(current!); } catch { }
+                    });
+                }
+            }
+            catch { }
 
             Dispatch(() => _bridge?.SendToWebview("result_received", JsonConvert.SerializeObject(new
             {
