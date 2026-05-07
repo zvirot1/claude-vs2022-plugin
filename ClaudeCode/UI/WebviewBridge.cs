@@ -26,6 +26,11 @@ namespace ClaudeCode.UI
             _webView.WebMessageReceived += OnWebMessageReceived;
         }
 
+        // Serializing semaphore — async void ExecuteScriptAsync calls can complete out of order,
+        // which caused state transitions like Stopped→Starting→Running to be applied in JS as
+        // [Running, Stopped] (last write wins on disorder). Funnel everything through one queue.
+        private readonly System.Threading.SemaphoreSlim _sendGate = new(1, 1);
+
         /// <summary>
         /// Sends a message from C# to the webview JavaScript.
         /// Calls window.receiveFromJava(type, data) in the browser.
@@ -38,6 +43,9 @@ namespace ClaudeCode.UI
             // jsonData is already a JSON string, embed it directly
             var script = $"if (window.receiveFromJava) {{ window.receiveFromJava({escapedType}, {jsonData}); }}";
 
+            // Serialize sends so events arrive in the order they were fired (event order matters
+            // for state transitions like Stopping→Stopped→Starting→Running).
+            await _sendGate.WaitAsync();
             try
             {
                 await _webView.CoreWebView2.ExecuteScriptAsync(script);
@@ -45,6 +53,10 @@ namespace ClaudeCode.UI
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[WebviewBridge] Error executing JS: {ex.Message}");
+            }
+            finally
+            {
+                _sendGate.Release();
             }
         }
 

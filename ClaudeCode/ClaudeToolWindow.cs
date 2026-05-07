@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
 using Microsoft.VisualStudio.Shell;
 
@@ -59,6 +60,7 @@ namespace ClaudeCode
             _defaultCaption = _myInstanceId == 0 ? "Claude Code" : $"Claude Code ({_myInstanceId + 1})";
             // Eagerly look up this instance's persisted session summary so the tab caption
             // shows the user's chosen name even before the panel content is loaded/focused.
+            // Tries plugin store first (manual rename), then the CLI's JSONL transcript.
             string initialCaption = _defaultCaption;
             try
             {
@@ -67,10 +69,24 @@ namespace ClaudeCode
                     s.LastSessionIdPerInstance.TryGetValue(_myInstanceId, out var sid) &&
                     !string.IsNullOrEmpty(sid))
                 {
+                    // 1) Plugin store (kept for manual renames)
                     var store = new Session.SessionStore();
                     var info = store.LoadSession(sid);
                     if (!string.IsNullOrWhiteSpace(info?.Summary))
                         initialCaption = info!.Summary!;
+
+                    // 2) Fallback to JSONL CLI auto-summary / first-user-message
+                    if (initialCaption == _defaultCaption)
+                    {
+                        try
+                        {
+                            var fromJsonl = Session.JsonlSessionScanner.ListSessions()
+                                .FirstOrDefault(j => j.SessionId == sid);
+                            if (!string.IsNullOrWhiteSpace(fromJsonl?.Summary))
+                                initialCaption = fromJsonl!.Summary!;
+                        }
+                        catch { }
+                    }
                 }
             }
             catch { }
@@ -155,14 +171,12 @@ namespace ClaudeCode
                     if (id != 0) // don't dispose the default singleton on close
                         Service.ClaudeProjectService.RemoveInstance(id);
                     UI.ClaudeChatPanel.UnregisterInstance(id, panel);
-                    // B3: forget this instance from persisted open-list
-                    try
-                    {
-                        var s = Settings.ClaudeSettings.Instance;
-                        if (s.OpenInstanceIds != null && s.OpenInstanceIds.Remove(id))
-                            s.Save();
-                    }
-                    catch { }
+                    // Note: deliberately NOT removing the id from persisted OpenInstanceIds.
+                    // VS shutdown disposes every tool window, which would empty the list and
+                    // leave nothing to restore on next launch. The id stays in the list and
+                    // the next-startup cleanup pass trims it to the 5 most-recent.
+                    // Manual user-close also preserves the id — restored as a "recent" window
+                    // on next VS launch (matches IntelliJ tab behaviour).
                 }
             }
             catch { }
