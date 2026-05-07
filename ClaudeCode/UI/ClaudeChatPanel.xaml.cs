@@ -61,6 +61,10 @@ namespace ClaudeCode.UI
         /// MaxOpenWindows cap before spawning another tool window.</summary>
         public static int GetOpenWindowCount() => _activeInstances.Count;
 
+        /// <summary>Snapshot of currently registered panel instance IDs.</summary>
+        public static System.Collections.Generic.List<int> GetOpenInstanceIds()
+            => new System.Collections.Generic.List<int>(_activeInstances.Keys);
+
         public static void UnregisterInstance(int id, ClaudeChatPanel panel)
         {
             if (_activeInstances.TryGetValue(id, out var cur) && cur == panel)
@@ -874,11 +878,16 @@ namespace ClaudeCode.UI
             // The JSONL transcript is stored under the SESSION's original working directory,
             // which may not equal the current panel's working directory (user could be resuming
             // a session from a different project). Look it up from the store first; fall back
-            // to the panel's cwd if unknown.
+            // to the panel's cwd if the original folder no longer exists on this machine.
             var stored = _service?.SessionManager.ListSessions()
                 ?.FirstOrDefault(s => s.SessionId == sessionId);
             var sessionWorkingDir = stored?.WorkingDirectory;
-            var workingDir = !string.IsNullOrEmpty(sessionWorkingDir)
+            // For history loading we want the session's original cwd (so we find the right JSONL).
+            // For CLI start we need a directory that EXISTS — fall back to panel's cwd.
+            var jsonlWorkingDir = !string.IsNullOrEmpty(sessionWorkingDir)
+                ? sessionWorkingDir!
+                : GetWorkingDirectory();
+            var workingDir = (!string.IsNullOrEmpty(sessionWorkingDir) && System.IO.Directory.Exists(sessionWorkingDir))
                 ? sessionWorkingDir!
                 : GetWorkingDirectory();
 
@@ -908,18 +917,52 @@ namespace ClaudeCode.UI
             };
 
             // Load history from JSONL so replayed bubbles show the past conversation.
+            // Use jsonlWorkingDir (the session's original cwd) so we find the right JSONL,
+            // even when the cwd no longer exists and we'll spawn the CLI from a fallback.
             try
             {
-                var history = Session.SessionJsonlLoader.Load(sessionId!, workingDir);
+                var history = Session.SessionJsonlLoader.Load(sessionId!, jsonlWorkingDir);
                 if (history.Count > 0 && _model != null) _model.LoadHistory(history);
             }
             catch (Exception ex) { DebugLog($"Resume LoadHistory failed: {ex.Message}"); }
+
+            // Push session_initialized BEFORE Start so the panel header + tab caption
+            // update even if the CLI fails to spawn (rare: original cwd missing, etc.).
+            // We compute the summary now so it's already correct on first paint.
+            var summaryEarly = stored?.Summary;
+            if (string.IsNullOrEmpty(summaryEarly))
+                summaryEarly = TryReadCliSummaryFromJsonl(sessionId!, jsonlWorkingDir);
+            if (string.IsNullOrEmpty(summaryEarly) && _model != null)
+            {
+                foreach (var m in _model.GetMessages())
+                {
+                    if (m.MessageRole == MessageBlock.Role.User)
+                    {
+                        var t = Session.SessionJsonlLoader.StripPrependedNoise(m.GetFullText().Trim());
+                        if (!string.IsNullOrEmpty(t))
+                        {
+                            summaryEarly = t.Length > 60 ? t.Substring(0, 57) + "..." : t;
+                            break;
+                        }
+                    }
+                }
+            }
+            _bridge?.SendToWebview("session_initialized", JsonConvert.SerializeObject(new
+            {
+                sessionId = sessionId,
+                workingDirectory = workingDir,
+                summary = summaryEarly
+            }));
+            if (!string.IsNullOrEmpty(summaryEarly))
+                try { CaptionUpdater?.Invoke(summaryEarly!); } catch { }
+            _lastPushedTitle = summaryEarly;
 
             try { _cliManager?.Start(config); }
             catch (Exception ex)
             {
                 _bridge?.SendToWebview("error", JsonConvert.SerializeObject(new
-                    { message = "Failed to start CLI for resumed session: " + ex.Message }));
+                    { message = "Failed to start CLI for resumed session: " + ex.Message
+                                + (workingDir != sessionWorkingDir ? $" (worked around missing cwd '{sessionWorkingDir}' by using '{workingDir}')" : "") }));
                 return;
             }
 
@@ -932,41 +975,7 @@ namespace ClaudeCode.UI
             }
             catch { }
 
-            // Tell the webview which session is now active. Include summary so the editable
-            // header title (and the tool-window tab caption) restore the chosen name.
-            // If the store entry has no summary (resuming a session it never tracked), fall
-            // back to: (1) the JSONL CLI auto-summary, (2) the first user message from the
-            // loaded history, so the title reflects something meaningful instead of "Claude".
-            var summary = stored?.Summary;
-            if (string.IsNullOrEmpty(summary))
-            {
-                summary = TryReadCliSummaryFromJsonl(sessionId!, workingDir);
-            }
-            if (string.IsNullOrEmpty(summary) && _model != null)
-            {
-                foreach (var m in _model.GetMessages())
-                {
-                    if (m.MessageRole == MessageBlock.Role.User)
-                    {
-                        var t = Session.SessionJsonlLoader.StripPrependedNoise(m.GetFullText().Trim());
-                        if (!string.IsNullOrEmpty(t))
-                        {
-                            summary = t.Length > 60 ? t.Substring(0, 57) + "..." : t;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            _bridge?.SendToWebview("session_initialized", JsonConvert.SerializeObject(new
-            {
-                sessionId = sessionId,
-                workingDirectory = workingDir,
-                summary = summary
-            }));
-            // Sync tool-window tab caption with the resumed session's title (if any).
-            if (!string.IsNullOrEmpty(summary))
-                try { CaptionUpdater?.Invoke(summary!); } catch { }
+            // (session_initialized already pushed above before Start)
         }
 
         /// <summary>Read the last <c>{"type":"summary"}</c> entry from the session's JSONL.

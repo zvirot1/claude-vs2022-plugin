@@ -16,8 +16,12 @@ namespace ClaudeCode
 {
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(PackageGuidString)]
+    // Transient = true — VS will NOT auto-restore Claude tool windows from its layout (.suo).
+    // Tab persistence is handled entirely by the plugin via OpenInstanceIds settings, with a
+    // hard cap of 5. Without this, VS would restore every Claude window the user ever opened
+    // even though we set OpenInstanceIds = the most-recent 5.
     [ProvideToolWindow(typeof(ClaudeToolWindow), Style = VsDockStyle.Tabbed,
-        DockedWidth = 400, DockedHeight = 600, Transient = false,
+        DockedWidth = 400, DockedHeight = 600, Transient = true,
         MultiInstances = true,
         Window = "3ae79031-e1bc-11d0-8f78-00a0c9110057")]
     [ProvideToolWindowVisibility(typeof(ClaudeToolWindow), VSConstants.UICONTEXT.SolutionExistsAndFullyLoaded_string)]
@@ -99,29 +103,93 @@ namespace ClaudeCode
             // B3: Restore previously-open Claude tool window instances (tab persistence across restart).
             // Deferred: restoring tool windows during InitializeAsync can collide with VS's own
             // startup window-layout loading and leave VS in a half-painted state. Run after a
-            // short idle delay instead.
+            // short idle delay instead. We also run a quick sync cleanup pass first to close
+            // excess windows VS already auto-restored from its layout.
             _ = JoinableTaskFactory.RunAsync(async () =>
             {
+                // Multiple passes — VS keeps restoring frames over the first few seconds,
+                // and dehydrated/auto-hidden tabs don't all materialize at once.
+                foreach (var ms in new[] { 500, 1500, 3500, 6000 })
+                {
+                    try
+                    {
+                        await Task.Delay(ms, DisposalToken);
+                        var n = await CloseExcessClaudeFramesAsync(5);
+                        if (n > 0) System.Diagnostics.Debug.WriteLine($"[Cap] {ms}ms-pass closed {n} excess");
+                    }
+                    catch { }
+                }
+
                 try
                 {
-                    await Task.Delay(3000, DisposalToken);
+                    await Task.Delay(2500, DisposalToken);
                     await JoinableTaskFactory.SwitchToMainThreadAsync(DisposalToken);
-                    var s = Settings.ClaudeSettings.Instance;
-                    var ids = s.OpenInstanceIds;
-                    if (ids == null || ids.Count == 0) return;
-                    // Cap restored windows at 5 — keep the most-recent (= last added) ids.
-                    // Avoids spamming dozens of stale tabs on VS startup if the user once
-                    // opened many windows. The rest are simply forgotten.
                     const int RestoreCap = 5;
+                    var s = Settings.ClaudeSettings.Instance;
+
+                    // ONE-TIME CLEANUP: prune persisted state down to the cap so VS's own
+                    // layout-restore can't bring back more than the user wants. We trim
+                    // OpenInstanceIds + LastSessionIdPerInstance to keep only the 5 newest
+                    // (largest InstanceId = most recent timestamps).
+                    if (s.OpenInstanceIds != null && s.OpenInstanceIds.Count > RestoreCap)
+                    {
+                        var keep = s.OpenInstanceIds.Distinct().OrderBy(i => i).ToList();
+                        keep = keep.GetRange(keep.Count - RestoreCap, RestoreCap);
+                        var keepSet = new System.Collections.Generic.HashSet<int>(keep);
+                        s.OpenInstanceIds = keep;
+                        if (s.LastSessionIdPerInstance != null)
+                        {
+                            var stale = s.LastSessionIdPerInstance.Keys.Where(k => !keepSet.Contains(k)).ToList();
+                            foreach (var k in stale) s.LastSessionIdPerInstance.Remove(k);
+                        }
+                        s.Save();
+                    }
+
+                    // Second pass via the Shell-level frame enumeration (catches dehydrated tabs).
+                    var n2 = await CloseExcessClaudeFramesAsync(RestoreCap);
+                    System.Diagnostics.Debug.WriteLine($"[Cap] second-pass closed {n2} excess Claude frames");
+
+                    var ids = s.OpenInstanceIds;
+
+                    // VS auto-restores tool windows from its own layout *before* this code runs.
+                    // First step: if we already have more than the cap open, close the oldest
+                    // Claude panels (smallest InstanceId — earlier timestamps) until we're at the cap.
+                    var alreadyOpen = UI.ClaudeChatPanel.GetOpenWindowCount();
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Restore] persisted={ids?.Count ?? 0}, alreadyOpen={alreadyOpen}, cap={RestoreCap}");
+
+                    if (alreadyOpen > RestoreCap)
+                    {
+                        var openIds = UI.ClaudeChatPanel.GetOpenInstanceIds();
+                        // Keep newest (largest InstanceId — recent timestamps); close oldest.
+                        openIds.Sort();
+                        var toClose = openIds.Count - RestoreCap;
+                        for (int i = 0; i < toClose; i++)
+                        {
+                            var idToClose = openIds[i];
+                            try { await CloseToolWindowAsync(typeof(ClaudeToolWindow), idToClose); }
+                            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Restore] close id={idToClose} failed: {ex.Message}"); }
+                        }
+                    }
+
+                    if (ids == null || ids.Count == 0) return;
+                    var slotsLeft = System.Math.Max(0, RestoreCap - UI.ClaudeChatPanel.GetOpenWindowCount());
+
+                    // Capture the most-recent ids and clear the persisted list (the ctor of
+                    // each re-opened window will re-add itself).
                     var distinct = ids.Distinct().ToList();
-                    var toRestore = distinct.Count <= RestoreCap
-                        ? distinct
-                        : distinct.GetRange(distinct.Count - RestoreCap, RestoreCap);
-                    // Clear — ClaudeToolWindow ctor will re-add each one as it opens.
                     s.OpenInstanceIds = new System.Collections.Generic.List<int>();
                     s.Save();
+
+                    if (slotsLeft == 0) return;
+
+                    var toRestore = distinct.Count <= slotsLeft
+                        ? distinct
+                        : distinct.GetRange(distinct.Count - slotsLeft, slotsLeft);
+
                     foreach (var id in toRestore)
                     {
+                        if (UI.ClaudeChatPanel.GetOpenWindowCount() >= RestoreCap) break;
                         try { await ShowToolWindowAsync(typeof(ClaudeToolWindow), id, true, DisposalToken); }
                         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Restore] id={id} failed: {ex.Message}"); }
                     }
@@ -131,6 +199,104 @@ namespace ClaudeCode
                     System.Diagnostics.Debug.WriteLine($"[ClaudeCodePackage] Tab restore error: {ex.Message}");
                 }
             });
+        }
+
+        /// <summary>
+        /// Close a specific multi-instance tool window (by type+id) without disposing the package.
+        /// Used by the startup cap to trim excess Claude panels VS auto-restored from its layout.
+        /// </summary>
+        private async Task CloseToolWindowAsync(Type toolWindowType, int instanceId)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync(DisposalToken);
+            // FindToolWindow returns null for windows not yet shown; here we know they are
+            // because GetOpenInstanceIds enumerated registered panels.
+            var pane = FindToolWindow(toolWindowType, instanceId, false);
+            if (pane?.Frame is Microsoft.VisualStudio.Shell.Interop.IVsWindowFrame frame)
+                frame.CloseFrame((uint)Microsoft.VisualStudio.Shell.Interop.__FRAMECLOSE.FRAMECLOSE_NoSave);
+        }
+
+        /// <summary>
+        /// Enumerate ALL VS tool window frames matching our ClaudeToolWindow GUID — including
+        /// collapsed/dehydrated ones VS restored from its layout but for which OnToolWindowCreated
+        /// hasn't fired yet. This is the only reliable way to enforce the per-startup cap, because
+        /// the ctor-based self-close only runs when the frame is materialized.
+        /// </summary>
+        private async Task<int> CloseExcessClaudeFramesAsync(int cap)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync(DisposalToken);
+            int closed = 0;
+            int totalFound = 0;
+            try
+            {
+                var shellSvc = await GetServiceAsync(typeof(Microsoft.VisualStudio.Shell.Interop.SVsUIShell));
+                var shellBase = shellSvc as Microsoft.VisualStudio.Shell.Interop.IVsUIShell;
+                if (shellBase == null) return 0;
+
+                var typeGuid = typeof(ClaudeToolWindow).GUID;
+                var frames = new System.Collections.Generic.List<(Microsoft.VisualStudio.Shell.Interop.IVsWindowFrame frame, int order)>();
+
+                Microsoft.VisualStudio.Shell.Interop.IEnumWindowFrames? enumerator = null;
+                try
+                {
+                    var hr = shellBase.GetToolWindowEnum(out enumerator);
+                    if (hr != Microsoft.VisualStudio.VSConstants.S_OK) enumerator = null;
+                }
+                catch { enumerator = null; }
+
+                int frameCount = 0;
+                if (enumerator != null)
+                {
+                    var arr = new Microsoft.VisualStudio.Shell.Interop.IVsWindowFrame[1];
+                    while (enumerator.Next(1, arr, out var fetched) == Microsoft.VisualStudio.VSConstants.S_OK && fetched == 1)
+                    {
+                        var f = arr[0]; if (f == null) continue;
+                        frameCount++;
+                        // Try multiple GUID properties — different VS versions / window types
+                        // expose the type GUID under different VSFPROPID slots.
+                        Guid? matchedGuid = null;
+                        foreach (var propId in new[] { -3007, -4007, -4006, -3000, -3500 })
+                        {
+                            if (f.GetProperty(propId, out var p) == 0 && p is Guid gg)
+                            {
+                                if (gg == typeGuid) { matchedGuid = gg; break; }
+                            }
+                        }
+                        if (matchedGuid != null)
+                        {
+                            totalFound++;
+                            int id = 0;
+                            if (f.GetProperty(-3030, out var idObj) == 0 && idObj is int n) id = n;
+                            frames.Add((f, id));
+                        }
+                    }
+                }
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeCode", "diag.log"),
+                    $"[{DateTime.Now:HH:mm:ss}] [Cap] enumerator={(enumerator != null)} totalFrames={frameCount} matched={totalFound}\n");
+
+                ClaudeCode.Diagnostics.Log("Cap", $"EnumWindowFrames found {totalFound} Claude frames, cap={cap}");
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeCode", "diag.log"),
+                    $"[{DateTime.Now:HH:mm:ss}] [Cap] found={totalFound} cap={cap}\n");
+
+                if (frames.Count <= cap) return 0;
+
+                // Keep newest (highest InstanceId — recent timestamps). Close the rest.
+                frames.Sort((a, b) => a.order.CompareTo(b.order));
+                var toCloseCount = frames.Count - cap;
+                for (int i = 0; i < toCloseCount; i++)
+                {
+                    try
+                    {
+                        // SaveAll first to avoid losing in-flight panel state, then NoSave close.
+                        frames[i].frame.CloseFrame((uint)Microsoft.VisualStudio.Shell.Interop.__FRAMECLOSE.FRAMECLOSE_NoSave);
+                        closed++;
+                    }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[CloseExcess] {ex.Message}"); }
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[CloseExcess] {ex.Message}"); }
+            return closed;
         }
 
         /// <summary>

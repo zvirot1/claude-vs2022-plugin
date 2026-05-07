@@ -20,11 +20,28 @@ namespace ClaudeCode
         /// <summary>Set to true by HandleNewConversationWindow so the next-created tool window starts fresh (no auto-resume).</summary>
         public static volatile bool NextIsUserInitiatedFresh = false;
 
+        /// <summary>Live tracking of constructed (not-yet-disposed) ClaudeToolWindow instances.
+        /// Updated synchronously in ctor / Dispose so the cap can see them before WPF Loaded fires.</summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, ClaudeToolWindow> _liveWindows = new();
+        public static int GetLiveWindowCount() => _liveWindows.Count;
+        public static System.Collections.Generic.List<int> GetLiveInstanceIds()
+            => new System.Collections.Generic.List<int>(_liveWindows.Keys);
+
+        /// <summary>Hard cap on simultaneously-live tool windows.</summary>
+        private const int MaxLive = 5;
+
+        private bool _selfClosePending = false;
+
         private readonly string _defaultCaption;
 
         public ClaudeToolWindow() : base(null)
         {
             _myInstanceId = System.Threading.Interlocked.Increment(ref _nextInstanceId) - 1;
+            _liveWindows[_myInstanceId] = this;
+            // If we already have ≥ MaxLive panels alive, mark this one for self-close
+            // as soon as Frame becomes available (in OnToolWindowCreated).
+            if (_liveWindows.Count > MaxLive)
+                _selfClosePending = true;
             bool isFresh = NextIsUserInitiatedFresh;
             NextIsUserInitiatedFresh = false;
             if (isFresh)
@@ -91,6 +108,21 @@ namespace ClaudeCode
         public override void OnToolWindowCreated()
         {
             base.OnToolWindowCreated();
+            // Excess windows from VS layout restore: close ourselves now that Frame exists.
+            if (_selfClosePending)
+            {
+                _selfClosePending = false;
+                try
+                {
+                    Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.Run(async () =>
+                    {
+                        await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        if (Frame is Microsoft.VisualStudio.Shell.Interop.IVsWindowFrame frame)
+                            frame.CloseFrame((uint)Microsoft.VisualStudio.Shell.Interop.__FRAMECLOSE.FRAMECLOSE_NoSave);
+                    });
+                }
+                catch { }
+            }
         }
 
         private int GetMultiInstanceId()
@@ -114,6 +146,7 @@ namespace ClaudeCode
 
         protected override void Dispose(bool disposing)
         {
+            _liveWindows.TryRemove(_myInstanceId, out _);
             try
             {
                 if (Content is UI.ClaudeChatPanel panel && disposing)

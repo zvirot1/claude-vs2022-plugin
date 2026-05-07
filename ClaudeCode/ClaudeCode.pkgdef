@@ -11,12 +11,13 @@
 [$RootKey$\Menus]
 "{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"=", Menus.ctmenu, 1"
 
-; Tool Window (Transient=false for persistence)
+; Tool Window (Transient=true so VS doesn't auto-restore extras from .suo).
+; The plugin's own OpenInstanceIds + cap=5 control which windows reopen.
 [$RootKey$\ToolWindows\{C1D2E3F4-A5B6-7890-CDEF-123456789012}]
 @="{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"
 "Style"="Tabbed"
 "Window"="3ae79031-e1bc-11d0-8f78-00a0c9110057"
-"Transient"=dword:00000000
+"Transient"=dword:00000001
 
 ; Tool Window Visibility - auto-show when solution loaded
 [$RootKey$\ToolWindows\{C1D2E3F4-A5B6-7890-CDEF-123456789012}\Visibility]

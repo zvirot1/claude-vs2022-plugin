@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ClaudeCode.Model;
 
 namespace ClaudeCode.Session
@@ -137,7 +138,26 @@ namespace ClaudeCode.Session
             catch { return null; }
         }
 
-        public List<SessionInfo> ListSessions() => _store.ListSessions();
+        /// <summary>
+        /// IntelliJ port: list real CLI sessions by scanning the JSONL transcripts under
+        /// <c>~/.claude/projects/</c>, then overlay any user-renamed Summary from our local
+        /// plugin store. This avoids the plugin-store noise (one ghost entry per opened panel).
+        /// </summary>
+        public List<SessionInfo> ListSessions(string? projectDir = null)
+        {
+            var fromJsonl = JsonlSessionScanner.ListSessions(projectDir);
+            // Overlay user renames from the plugin store (only the Summary field) so manual
+            // renames survive even though the JSONL doesn't carry them.
+            var renamed = _store.ListSessions()
+                .Where(s => !string.IsNullOrEmpty(s.SessionId) && !string.IsNullOrEmpty(s.Summary))
+                .ToDictionary(s => s.SessionId!, s => s.Summary!, StringComparer.OrdinalIgnoreCase);
+            foreach (var info in fromJsonl)
+            {
+                if (info.SessionId != null && renamed.TryGetValue(info.SessionId, out var custom))
+                    info.Summary = custom;
+            }
+            return fromJsonl;
+        }
 
         public void DeleteSession(string sessionId) => _store.DeleteSession(sessionId);
 
