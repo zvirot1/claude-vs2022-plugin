@@ -914,7 +914,30 @@ namespace ClaudeCode.UI
 
             // Tell the webview which session is now active. Include summary so the editable
             // header title (and the tool-window tab caption) restore the chosen name.
+            // If the store entry has no summary (resuming a session it never tracked), fall
+            // back to: (1) the JSONL CLI auto-summary, (2) the first user message from the
+            // loaded history, so the title reflects something meaningful instead of "Claude".
             var summary = stored?.Summary;
+            if (string.IsNullOrEmpty(summary))
+            {
+                summary = TryReadCliSummaryFromJsonl(sessionId!, workingDir);
+            }
+            if (string.IsNullOrEmpty(summary) && _model != null)
+            {
+                foreach (var m in _model.GetMessages())
+                {
+                    if (m.MessageRole == MessageBlock.Role.User)
+                    {
+                        var t = Session.SessionJsonlLoader.StripPrependedNoise(m.GetFullText().Trim());
+                        if (!string.IsNullOrEmpty(t))
+                        {
+                            summary = t.Length > 60 ? t.Substring(0, 57) + "..." : t;
+                            break;
+                        }
+                    }
+                }
+            }
+
             _bridge?.SendToWebview("session_initialized", JsonConvert.SerializeObject(new
             {
                 sessionId = sessionId,
@@ -924,6 +947,35 @@ namespace ClaudeCode.UI
             // Sync tool-window tab caption with the resumed session's title (if any).
             if (!string.IsNullOrEmpty(summary))
                 try { CaptionUpdater?.Invoke(summary!); } catch { }
+        }
+
+        /// <summary>Read the last <c>{"type":"summary"}</c> entry from the session's JSONL.
+        /// Mirror of ClaudeSessionManager helper, kept here to avoid a public API change.</summary>
+        private static string? TryReadCliSummaryFromJsonl(string sessionId, string workingDir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(workingDir)) return null;
+                var encoded = workingDir.Replace('\\', '-').Replace('/', '-').Replace(':', '-');
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var p = System.IO.Path.Combine(home, ".claude", "projects", encoded, sessionId + ".jsonl");
+                if (!System.IO.File.Exists(p)) return null;
+                string? best = null;
+                foreach (var line in System.IO.File.ReadAllLines(p))
+                {
+                    if (string.IsNullOrWhiteSpace(line) || !line.Contains("\"summary\"")) continue;
+                    try
+                    {
+                        var obj = JObject.Parse(line);
+                        if (obj.Value<string>("type") != "summary") continue;
+                        var s = obj.Value<string>("summary");
+                        if (!string.IsNullOrEmpty(s)) best = s;
+                    }
+                    catch { }
+                }
+                return best;
+            }
+            catch { return null; }
         }
 
         private void HandleHistory()
