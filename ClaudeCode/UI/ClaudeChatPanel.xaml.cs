@@ -851,13 +851,24 @@ namespace ClaudeCode.UI
             try { _service?.EditDecisionManager.Clear(); } catch { }
             _pendingToolInputs.Clear();
 
+            // The JSONL transcript is stored under the SESSION's original working directory,
+            // which may not equal the current panel's working directory (user could be resuming
+            // a session from a different project). Look it up from the store first; fall back
+            // to the panel's cwd if unknown.
+            var stored = _service?.SessionManager.ListSessions()
+                ?.FirstOrDefault(s => s.SessionId == sessionId);
+            var sessionWorkingDir = stored?.WorkingDirectory;
+            var workingDir = !string.IsNullOrEmpty(sessionWorkingDir)
+                ? sessionWorkingDir!
+                : GetWorkingDirectory();
+
             // Adopt the new session id BEFORE start so racing events use the right id.
-            try { _service?.SessionManager.TrackSession(sessionId!, GetWorkingDirectory()); } catch { }
+            try { _service?.SessionManager.TrackSession(sessionId!, workingDir); } catch { }
             if (_model != null)
             {
                 _model.SessionInfo ??= new Model.SessionInfo(sessionId!);
                 _model.SessionInfo.SessionId = sessionId;
-                _model.SessionInfo.WorkingDirectory = GetWorkingDirectory();
+                _model.SessionInfo.WorkingDirectory = workingDir;
             }
 
             var cliPath = ClaudeCliManager.GetCliPath();
@@ -867,7 +878,6 @@ namespace ClaudeCode.UI
                     { message = "Claude CLI path is not configured." }));
                 return;
             }
-            var workingDir = GetWorkingDirectory();
             var settings = Settings.ClaudeSettings.Instance;
             var config = new CliProcessConfig(cliPath!, workingDir)
             {
@@ -902,12 +912,18 @@ namespace ClaudeCode.UI
             }
             catch { }
 
-            // Tell the webview which session is now active.
+            // Tell the webview which session is now active. Include summary so the editable
+            // header title (and the tool-window tab caption) restore the chosen name.
+            var summary = stored?.Summary;
             _bridge?.SendToWebview("session_initialized", JsonConvert.SerializeObject(new
             {
                 sessionId = sessionId,
-                workingDirectory = workingDir
+                workingDirectory = workingDir,
+                summary = summary
             }));
+            // Sync tool-window tab caption with the resumed session's title (if any).
+            if (!string.IsNullOrEmpty(summary))
+                try { CaptionUpdater?.Invoke(summary!); } catch { }
         }
 
         private void HandleHistory()
