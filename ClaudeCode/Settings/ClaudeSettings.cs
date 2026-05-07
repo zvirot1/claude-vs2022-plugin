@@ -62,6 +62,10 @@ namespace ClaudeCode.Settings
         /// Empty string = use default (~/.claude/skills/, matching CLI + IntelliJ convention).</summary>
         public string SkillsFolder { get; set; } = "";
 
+        /// <summary>Webview color theme. <c>"auto"</c> follows the VS shell,
+        /// <c>"dark"</c> / <c>"light"</c> override regardless of VS.</summary>
+        public string Theme { get; set; } = "auto";
+
         public static ClaudeSettings Instance
         {
             get

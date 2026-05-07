@@ -1982,6 +1982,14 @@ namespace ClaudeCode.UI
 
         private string DetectVsTheme()
         {
+            // Manual override from Tools → Options → Claude Code → Appearance → Chat theme.
+            try
+            {
+                var manual = Settings.ClaudeSettings.Instance.Theme?.ToLowerInvariant();
+                if (manual == "dark" || manual == "light") return manual!;
+            }
+            catch { }
+
             // Most reliable approach: ask the VS shell for the *actual rendered*
             // ToolWindow background color and compare its brightness. Works on
             // every theme variant (Dark / Dark Plus / Solarized / Light / Blue / High-Contrast)

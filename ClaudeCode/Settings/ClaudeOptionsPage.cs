@@ -69,6 +69,14 @@ namespace ClaudeCode.Settings
                      "Leave empty to use the default %USERPROFILE%\\.claude\\skills\\ (matches the Claude CLI convention).")]
         public string SkillsFolder { get; set; } = "";
 
+        public enum ChatTheme { Auto, Dark, Light }
+
+        [Category("Appearance")]
+        [DisplayName("Chat theme")]
+        [Description("Color theme for the Claude Code panel. " +
+                     "'Auto' follows the Visual Studio theme. 'Dark' / 'Light' override it.")]
+        public ChatTheme Theme { get; set; } = ChatTheme.Auto;
+
         protected override void OnApply(PageApplyEventArgs e)
         {
             base.OnApply(e);
@@ -85,6 +93,7 @@ namespace ClaudeCode.Settings
             settings.ShowStreaming = ShowStreaming;
             settings.ApiKey = ApiKey;
             settings.SkillsFolder = SkillsFolder ?? "";
+            settings.Theme = Theme.ToString().ToLowerInvariant();
             settings.Save();
 
             // Also update claude_cli_path.txt in the extension directory
@@ -110,6 +119,12 @@ namespace ClaudeCode.Settings
             ShowStreaming = settings.ShowStreaming;
             ApiKey = settings.ApiKey;
             SkillsFolder = settings.SkillsFolder ?? "";
+            Theme = (settings.Theme?.ToLowerInvariant()) switch
+            {
+                "dark" => ChatTheme.Dark,
+                "light" => ChatTheme.Light,
+                _ => ChatTheme.Auto
+            };
 
             // If CliPath is empty, show current resolved path from the path file
             if (string.IsNullOrEmpty(CliPath))
