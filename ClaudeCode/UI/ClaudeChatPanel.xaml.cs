@@ -140,11 +140,30 @@ namespace ClaudeCode.UI
                     UserDataFolder = udf
                 };
                 DebugLog($"EnsureCoreWebView2Async UDF={udf}");
-                await _webView.EnsureCoreWebView2Async(null);
+                try
+                {
+                    await _webView.EnsureCoreWebView2Async(null);
+                }
+                catch (Exception webEx)
+                {
+                    DebugLog($"EnsureCoreWebView2Async FAILED: {webEx.Message}");
+                    _loadingText.Text = "WebView2 init failed:\n" + webEx.Message
+                        + "\n\nMake sure Microsoft Edge WebView2 Runtime is installed.\nDownload: https://go.microsoft.com/fwlink/p/?LinkId=2124703";
+                    return;
+                }
                 DebugLog("WebView2 ready");
 
                 _bridge = new WebviewBridge(_webView);
                 _bridge.MessageHandler = HandleWebviewMessage;
+
+                // Register NavigationCompleted BEFORE Navigate — on fast machines navigation
+                // can complete synchronously and the handler would never fire if registered later
+                // (this is what kept the 'Initializing...' overlay visible on remote machines).
+                _webView.NavigationCompleted += (_, __) =>
+                {
+                    _bridge?.InjectBridgeFunction();
+                    _loadingBorder.Visibility = Visibility.Collapsed;
+                };
 
                 var assemblyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
                 var htmlPath = Path.Combine(assemblyDir, "Resources", "webview", "index.html");
@@ -154,12 +173,24 @@ namespace ClaudeCode.UI
                     _webView.CoreWebView2.Navigate(new Uri(htmlPath).AbsoluteUri);
                     DebugLog("Navigation started");
                 }
-
-                _webView.NavigationCompleted += (_, __) =>
+                else
                 {
-                    _bridge.InjectBridgeFunction();
-                    _loadingBorder.Visibility = Visibility.Collapsed;
-                };
+                    _loadingText.Text = "HTML resource missing:\n" + htmlPath;
+                    return;
+                }
+
+                // Belt-and-braces: hide the overlay after 8s even if NavigationCompleted never fires.
+                _ = System.Threading.Tasks.Task.Delay(8000).ContinueWith(_ =>
+                {
+                    Dispatch(() =>
+                    {
+                        if (_loadingBorder.Visibility == Visibility.Visible)
+                        {
+                            DebugLog("Forcing loading overlay hide after 8s timeout");
+                            _loadingBorder.Visibility = Visibility.Collapsed;
+                        }
+                    });
+                });
 
                 // Round 3: per-instance project service (each tool window instance has its own)
                 var workingDir = GetWorkingDirectory();
