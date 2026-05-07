@@ -203,8 +203,14 @@ namespace ClaudeCode.UI
                 _cliManager.RemoveStateListener(this);
                 _cliManager.AddStateListener(this);
 
-                // Detect VS theme and update webview
+                // Detect VS theme and update webview — also subscribe to ThemeChanged so
+                // the panel re-themes live when the user switches Dark↔Light in Tools→Options.
                 DetectAndApplyTheme();
+                try
+                {
+                    Microsoft.VisualStudio.PlatformUI.VSColorTheme.ThemeChanged += _OnVsThemeChanged;
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -1969,33 +1975,53 @@ namespace ClaudeCode.UI
             _bridge?.SendToWebview("set_theme", JsonConvert.SerializeObject(new { theme }));
         }
 
+        private void _OnVsThemeChanged(Microsoft.VisualStudio.PlatformUI.ThemeChangedEventArgs e)
+        {
+            try { Dispatch(DetectAndApplyTheme); } catch { }
+        }
+
         private string DetectVsTheme()
         {
+            // Most reliable approach: ask the VS shell for the *actual rendered*
+            // ToolWindow background color and compare its brightness. Works on
+            // every theme variant (Dark / Dark Plus / Solarized / Light / Blue / High-Contrast)
+            // and over RDP, where DTE.Properties['CurrentTheme'] returns empty.
             try
             {
-                // Use the VS shell to get the current theme's background color
+                // ToolWindowBackground category+name — looked up via ThemeResourceKey to avoid
+                // the static EnvironmentColors class which lives in a separately-versioned assembly.
+                var category = new Guid("624ed9c3-bdfd-41fa-96c3-7c824ea32e3d"); // Environment
+                var key = new Microsoft.VisualStudio.Shell.ThemeResourceKey(
+                    category, "ToolWindowBackground",
+                    Microsoft.VisualStudio.Shell.ThemeResourceKeyType.BackgroundColor);
+                var bg = Microsoft.VisualStudio.PlatformUI.VSColorTheme.GetThemedColor(key);
+                var brightness = (0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B);
+                return brightness < 128 ? "dark" : "light";
+            }
+            catch { }
+
+            try
+            {
+                // Secondary: DTE-based GUID match (kept for older VS builds where
+                // VSColorTheme might fail before solution load).
                 var dte = Package.GetGlobalService(typeof(EnvDTE.DTE)) as EnvDTE80.DTE2;
                 if (dte != null)
                 {
                     var props = dte.Properties["Environment", "General"];
-                    // The "CurrentTheme" property gives the theme GUID
-                    // Dark: {1ded0138-47ce-435e-84ef-9ec1f439b749}
-                    // Light: {de3dbbcd-f642-433c-8353-8f1df4370aba}
-                    // Blue: {a4d6a176-b948-4b29-8c66-53c97a1ed7d0}
                     try
                     {
                         var themeGuid = props.Item("CurrentTheme")?.Value?.ToString()?.ToLower() ?? "";
-                        if (themeGuid.Contains("1ded0138")) return "dark";   // Dark theme
-                        if (themeGuid.Contains("de3dbbcd")) return "light";  // Light theme
-                        if (themeGuid.Contains("a4d6a176")) return "light";  // Blue theme (light-ish)
+                        if (themeGuid.Contains("1ded0138")) return "dark";   // Dark
+                        if (themeGuid.Contains("de3dbbcd")) return "light";  // Light
+                        if (themeGuid.Contains("a4d6a176")) return "light";  // Blue
                     }
                     catch { }
                 }
 
-                // Fallback: check system colors
-                var bg = SystemColors.WindowBrush.Color;
-                var brightness = (0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B);
-                return brightness < 128 ? "dark" : "light";
+                // Last-resort: system colors
+                var sysBg = SystemColors.WindowBrush.Color;
+                var sysBr = (0.299 * sysBg.R + 0.587 * sysBg.G + 0.114 * sysBg.B);
+                return sysBr < 128 ? "dark" : "light";
             }
             catch
             {
